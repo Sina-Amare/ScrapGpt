@@ -75,7 +75,7 @@ class Settings(BaseSettings):
         description="Secret key for JWT signing. Generate with: openssl rand -hex 32"
     )
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30, ge=5, le=1440)
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=15, ge=5, le=1440)
     REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=7, ge=1, le=30)
     PASSWORD_HASH_ROUNDS: int = Field(default=12, ge=4, le=31)
     

@@ -42,6 +42,10 @@ pydantic~=2.10.0
 # - Type-safe configuration from environment variables
 pydantic-settings~=2.6.0
 
+# Email-validator: Email validation for Pydantic EmailStr
+# - Required for email validation in auth schemas
+email-validator~=2.3.0
+
 # Python-dotenv: Load environment variables from .env files
 # - Used by pydantic-settings for local development
 python-dotenv~=1.0.0
@@ -56,6 +60,10 @@ python-jose[cryptography]~=3.3.0
 # Passlib: Password hashing library
 # - [bcrypt] for secure password hashing
 passlib[bcrypt]~=1.7.4
+
+# Bcrypt: bcrypt hashing (pinned for passlib compatibility)
+# - Must use 4.x, passlib doesn't support bcrypt 5.x yet
+bcrypt~=4.2.0
 
 # -----------------------------------------------------------------------------
 # Web Scraping
