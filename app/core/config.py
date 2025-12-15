@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     # Rate Limiting & Credits
     # -------------------------------------------------------------------------
-    DEFAULT_USER_CREDITS: int = Field(default=100, ge=0)
+    DEFAULT_DAILY_CREDITS: int = Field(default=5, ge=1, description="Default daily credits for new users")
     SCRAPE_CREDIT_COST: int = Field(default=1, ge=1)
     
     # -------------------------------------------------------------------------
