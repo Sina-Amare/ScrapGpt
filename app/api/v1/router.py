@@ -1,0 +1,28 @@
+"""
+API v1 router aggregation.
+
+This module combines all v1 endpoint routers into a single router
+that is mounted at the API v1 prefix.
+
+Usage:
+    from app.api.v1.router import api_v1_router
+    
+    app.include_router(api_v1_router, prefix="/api/v1")
+"""
+
+from fastapi import APIRouter
+
+from app.api.v1.endpoints import health
+
+# Create the main v1 router
+api_v1_router = APIRouter()
+
+# Include all endpoint routers
+# Health endpoints (no prefix - mounted at /api/v1/health)
+api_v1_router.include_router(health.router)
+
+# Future routers will be added here:
+# api_v1_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+# api_v1_router.include_router(scraping.router, prefix="/scrape", tags=["Scraping"])
+# api_v1_router.include_router(users.router, prefix="/users", tags=["Users"])
+# api_v1_router.include_router(jobs.router, prefix="/jobs", tags=["Jobs"])
