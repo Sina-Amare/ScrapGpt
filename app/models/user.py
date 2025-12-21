@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, Integer, String, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
 
@@ -130,9 +130,13 @@ class User(TimestampMixin, Base):
     )
     
     # -------------------------------------------------------------------------
-    # Relationships (Future)
+    # Relationships
     # -------------------------------------------------------------------------
-    # jobs: Mapped[list["Job"]] = relationship("Job", back_populates="user")
+    scrape_tasks = relationship(
+        "ScrapeTask",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     
     # -------------------------------------------------------------------------
     # Methods
