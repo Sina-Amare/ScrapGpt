@@ -1,4 +1,9 @@
 # ===========================
+# Agent/AI Tool Configs
+# ===========================
+.agent/
+
+# ===========================
 # Python
 # ===========================
 __pycache__/
@@ -180,3 +185,4 @@ celerybeat.pid
 
 # Additional Files 
 AGENTS.md
+.agent/
