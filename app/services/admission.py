@@ -57,35 +57,62 @@ async def admit_scrape_task(
 ) -> AdmissionResult:
     """
     Atomically create a scrape task and deduct credit.
-    
-    Sequence:
+
+    Sequence (inside explicit transaction):
     1. INSERT scrape_task (proves permission via partial unique index)
     2. UPDATE credits atomically (payment)
-    3. COMMIT or ROLLBACK
-    
+    3. Auto-COMMIT on success, auto-ROLLBACK on exception
+
     Args:
         user: Authenticated user (must be attached to session)
         url: URL to scrape
         db: Database session
-        
+
     Returns:
         AdmissionSuccess: Task created, credit deducted
         AdmissionError: Task not created, reason provided
     """
-    # Step 1: INSERT task
-    # The partial unique index will reject if user has active task
     task = ScrapeTask(
         user_id=user.id,
         url=url,
         state=TaskState.PERMISSION_GRANTED,
     )
-    db.add(task)
-    
+
     try:
-        # Flush to trigger INSERT and check unique constraint
-        await db.flush()
+        async with db.begin():
+            # Step 1: INSERT task
+            # The partial unique index will reject if user has active task
+            db.add(task)
+            await db.flush()
+
+            # Step 2: Atomic credit deduction
+            # UPDATE only if credits > 0, returns affected row count
+            result = await db.execute(
+                text("""
+                    UPDATE users
+                    SET credits_remaining = credits_remaining - 1,
+                        updated_at = NOW()
+                    WHERE id = :user_id AND credits_remaining > 0
+                """),
+                {"user_id": user.id},
+            )
+
+            if result.rowcount == 0:
+                # No rows affected = insufficient credits
+                # Raise to trigger rollback
+                raise _InsufficientCreditsSignal()
+
+        # Transaction committed successfully
+        # Refresh to get updated values
+        await db.refresh(user)
+        await db.refresh(task)
+
+        return AdmissionSuccess(
+            task=task,
+            credits_remaining=user.credits_remaining,
+        )
+
     except IntegrityError as e:
-        await db.rollback()
         # Check if it's the partial unique index violation
         if "ix_one_active_task_per_user" in str(e.orig):
             return AdmissionError(
@@ -94,35 +121,14 @@ async def admit_scrape_task(
             )
         # Re-raise unexpected integrity errors
         raise
-    
-    # Step 2: Atomic credit deduction
-    # UPDATE only if credits > 0, returns affected row count
-    result = await db.execute(
-        text("""
-            UPDATE users 
-            SET credits_remaining = credits_remaining - 1,
-                updated_at = NOW()
-            WHERE id = :user_id AND credits_remaining > 0
-        """),
-        {"user_id": user.id},
-    )
-    
-    if result.rowcount == 0:
-        # No rows affected = insufficient credits
-        await db.rollback()
+
+    except _InsufficientCreditsSignal:
         return AdmissionError(
             error_type=AdmissionErrorType.INSUFFICIENT_CREDITS,
             message="Not enough credits",
         )
-    
-    # Step 3: Commit
-    await db.commit()
-    
-    # Refresh to get updated values
-    await db.refresh(user)
-    await db.refresh(task)
-    
-    return AdmissionSuccess(
-        task=task,
-        credits_remaining=user.credits_remaining,
-    )
+
+
+class _InsufficientCreditsSignal(Exception):
+    """Internal signal to trigger transaction rollback for insufficient credits."""
+    pass
