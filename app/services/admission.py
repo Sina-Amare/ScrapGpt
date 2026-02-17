@@ -1,23 +1,31 @@
 """
 Admission service for scrape task creation.
 
-Creates task in PERMISSION_GRANTED state.
-Credits are NOT deducted here - only at LLM processing phase.
+Validates:
+1. User has credits (>= 1)
+2. User has no active task
+
+Credits reset daily at 00:00 UTC.
 """
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.scrape_task import ScrapeTask, TaskState
+from app.models.scrape_task import ScrapeTask, TaskState, TERMINAL_STATES
 from app.models.user import User
+
+
+logger = logging.getLogger(__name__)
 
 
 class AdmissionErrorType(str, Enum):
     """Types of admission failures."""
     ALREADY_HAS_ACTIVE_TASK = "ALREADY_HAS_ACTIVE_TASK"
+    INSUFFICIENT_CREDITS = "INSUFFICIENT_CREDITS"
 
 
 @dataclass
@@ -45,9 +53,11 @@ async def admit_scrape_task(
     """
     Create a scrape task in PERMISSION_GRANTED state.
 
-    Credits are NOT deducted here - deduction happens at LLM processing.
+    Checks:
+    1. User has >= 1 credit (credits reset daily at 00:00 UTC)
+    2. User has no active task (enforced by partial unique index)
 
-    The partial unique index enforces: at most one active task per user.
+    Credits are NOT deducted here - deduction happens at LLM processing.
 
     Args:
         user: Authenticated user
@@ -56,8 +66,19 @@ async def admit_scrape_task(
 
     Returns:
         AdmissionSuccess: Task created
-        AdmissionError: Already has active task
+        AdmissionError: Insufficient credits or already has active task
     """
+    # Credit check (credits reset at 00:00 UTC daily by scheduler)
+    if user.credits_remaining <= 0:
+        logger.info(
+            "admission.blocked.no_credits",
+            extra={"user_id": user.id, "credits": user.credits_remaining},
+        )
+        return AdmissionError(
+            error_type=AdmissionErrorType.INSUFFICIENT_CREDITS,
+            message="Insufficient credits. Credits reset daily at 00:00 UTC.",
+        )
+
     task = ScrapeTask(
         user_id=user.id,
         url=url,
@@ -71,13 +92,16 @@ async def admit_scrape_task(
 
         await db.refresh(task)
 
+        logger.info(
+            "admission.success",
+            extra={"user_id": user.id, "task_id": task.id, "url": url},
+        )
+
         return AdmissionSuccess(task=task)
 
     except IntegrityError as e:
         if "ix_one_active_task_per_user" in str(e.orig):
-            # Find the existing active task
             from sqlalchemy import select
-            from app.models.scrape_task import TERMINAL_STATES
 
             result = await db.execute(
                 select(ScrapeTask.id).where(
@@ -87,10 +111,16 @@ async def admit_scrape_task(
             )
             active_task_id = result.scalar_one_or_none()
 
+            logger.info(
+                "admission.blocked.active_task",
+                extra={"user_id": user.id, "active_task_id": active_task_id},
+            )
+
             return AdmissionError(
                 error_type=AdmissionErrorType.ALREADY_HAS_ACTIVE_TASK,
                 message="You already have an active scraping task",
                 active_task_id=active_task_id,
             )
         raise
+
 

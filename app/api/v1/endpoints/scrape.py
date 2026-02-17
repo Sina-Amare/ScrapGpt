@@ -6,13 +6,21 @@ GET /tasks/{id} - Get task status
 GET /tasks/current - Get user's current active task
 """
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Request,
+    status,
+)
 from pydantic import BaseModel, HttpUrl
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user
-from app.models.scrape_task import ScrapeTask, TaskState, TERMINAL_STATES
+from app.core.rate_limit import limiter, SCRAPE_RATE_LIMIT
+from app.models.scrape_task import ScrapeTask, TERMINAL_STATES
 from app.models.user import User
 from app.services.admission import (
     admit_scrape_task,
@@ -50,12 +58,15 @@ class TaskResponse(BaseModel):
     status_code=status.HTTP_202_ACCEPTED,
     summary="Start a scrape task",
     description="Create a new scrape task. Processing happens in background.",
+    responses={429: {"description": "Rate limit exceeded"}},
 )
+@limiter.limit(SCRAPE_RATE_LIMIT)
 async def start_scrape(
     request: StartScrapeRequest,
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    fastapi_request: Request = None,
 ) -> TaskResponse:
     """
     Start a new scrape task.
@@ -78,6 +89,14 @@ async def start_scrape(
                     "message": result.message,
                     "error_type": result.error_type.value,
                     "active_task_id": result.active_task_id,
+                },
+            )
+        if result.error_type == AdmissionErrorType.INSUFFICIENT_CREDITS:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail={
+                    "message": result.message,
+                    "error_type": result.error_type.value,
                 },
             )
         raise HTTPException(

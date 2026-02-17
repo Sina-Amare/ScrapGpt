@@ -106,18 +106,68 @@ async def transition_to_llm_processing(
     Atomically transition to LLM_PROCESSING and deduct credit.
 
     This is the ONLY place credits are deducted.
-    Both state transition and credit deduction happen in one transaction.
+    ATOMIC: Credit deduction AND state change happen in ONE transaction.
+
+    Validates task ownership before processing.
+    SAFE: Will not corrupt tasks already in terminal states.
+
+    Returns:
+        success=True: Credit deducted, state=LLM_PROCESSING
+        success=False: Validation error or already terminal
     """
     async with db.begin():
         task = await db.get(ScrapeTask, task_id)
         if not task:
             return TransitionResult(success=False, task=None, error="Task not found")
 
-        if not task.can_transition_to(TaskState.LLM_PROCESSING):
+        # SAFETY: Never modify a task already in terminal state
+        if task.is_terminal:
+            logger.warning(
+                "task.already_terminal",
+                extra={"task_id": task_id, "state": task.state.value},
+            )
             return TransitionResult(
                 success=False,
                 task=task,
-                error=f"Cannot transition from {task.state} to LLM_PROCESSING",
+                error=f"Task already in terminal state: {task.state.value}",
+            )
+
+        # Security: validate ownership
+        if task.user_id != user_id:
+            logger.error(
+                "security.ownership_mismatch",
+                extra={
+                    "task_id": task_id,
+                    "task_user": task.user_id,
+                    "caller": user_id
+                },
+            )
+            # Capture original state before mutation
+            original_state = task.state.value
+            # Mark as FAILED (safe - we verified not terminal above)
+            task.state = TaskState.FAILED
+            task.error = f"Security: Task ownership mismatch (was {original_state})"
+            await db.flush()
+            await db.refresh(task)
+            return TransitionResult(
+                success=False,
+                task=task,
+                error=f"Task ownership mismatch (original state: {original_state})",
+            )
+
+        # Capture original state before any mutation
+        original_state = task.state.value
+
+        if not task.can_transition_to(TaskState.LLM_PROCESSING):
+            # Mark as FAILED to maintain always-finalize guarantee
+            task.state = TaskState.FAILED
+            task.error = f"Invalid transition from {original_state}"
+            await db.flush()
+            await db.refresh(task)
+            return TransitionResult(
+                success=False,
+                task=task,
+                error=f"Cannot transition from {original_state} to LLM_PROCESSING",
             )
 
         # Atomic credit deduction
@@ -132,14 +182,15 @@ async def transition_to_llm_processing(
         )
 
         if result.rowcount == 0:
-            # Insufficient credits - mark as failed
+            # Insufficient credits - mark as FAILED (same transaction)
             task.state = TaskState.FAILED
             task.error = "Insufficient credits for LLM processing"
             logger.warning(
                 "task.failed.no_credits",
                 extra={"task_id": task_id, "user_id": user_id},
             )
-            await db.commit()
+            # Transaction commits on exit - FAILED state persisted atomically
+            await db.flush()
             await db.refresh(task)
             return TransitionResult(
                 success=False,
@@ -147,14 +198,17 @@ async def transition_to_llm_processing(
                 error="Insufficient credits",
             )
 
+        # Credit deducted successfully - update state (same transaction)
         task.state = TaskState.LLM_PROCESSING
         logger.info(
             "task.llm_processing",
             extra={"task_id": task_id, "credit_deducted": True},
         )
+        # Transaction commits on exit - both credit deduction and state persisted atomically
 
     await db.refresh(task)
     return TransitionResult(success=True, task=task)
+
 
 
 async def transition_to_completed(

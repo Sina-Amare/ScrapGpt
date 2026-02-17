@@ -132,37 +132,28 @@ async def require_credits(
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """
-    Dependency that checks and deducts credits for scraping.
+    DEPRECATED: Use admission.py credit check instead.
 
-    This dependency:
-    1. Gets the current authenticated user
-    2. Triggers lazy credit reset if 24h have passed
-    3. Checks if user has credits available
-    4. Returns user (credit deduction happens after successful scrape)
-
-    Args:
-        current_user: The authenticated user
-        db: Database session
-
-    Returns:
-        User: The user with credits available
+    This dependency uses the old lazy reset policy.
+    Credits now reset at 00:00 UTC via scheduler.
 
     Raises:
         HTTPException: 403 if no credits available
     """
-    # Trigger lazy credit reset
-    reset_occurred = current_user.ensure_credits_reset()
-    if reset_occurred:
-        await db.commit()
+    import warnings
+    warnings.warn(
+        "require_credits is deprecated. Use admission.py credit check.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
-    # Check credits
+    # Check credits (no lazy reset - scheduler handles reset now)
     if current_user.credits_remaining <= 0:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={
                 "message": "No credits remaining",
-                "credits_remaining": 0,
-                "seconds_until_reset": current_user.seconds_until_reset,
+                "error_type": "INSUFFICIENT_CREDITS",
             },
         )
 
@@ -174,14 +165,16 @@ async def deduct_credit(
     db: AsyncSession,
 ) -> None:
     """
-    Deduct one credit from user after successful operation.
+    DEPRECATED: Credits are now deducted atomically in task_state.py.
 
-    Call this after a successful scrape operation.
-
-    Args:
-        user: The user to deduct credit from
-        db: Database session
+    Do not use this function - it's not atomic and can cause race conditions.
     """
+    import warnings
+    warnings.warn(
+        "deduct_credit is deprecated. Use task_state.transition_to_llm_processing.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     user.credits_remaining -= 1
     await db.commit()
 

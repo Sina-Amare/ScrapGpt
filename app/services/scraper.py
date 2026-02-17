@@ -14,9 +14,6 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Scraping timeout (60 seconds)
-SCRAPE_TIMEOUT = 60.0
-
 
 class ScrapeError(Exception):
     """Raised when scraping fails."""
@@ -43,7 +40,7 @@ async def scrape_url(url: str) -> str:
 
     try:
         async with httpx.AsyncClient(
-            timeout=SCRAPE_TIMEOUT,
+            timeout=settings.SCRAPE_TIMEOUT,
             follow_redirects=True,
         ) as client:
             response = await client.get(
@@ -80,7 +77,7 @@ async def scrape_url(url: str) -> str:
 
     except httpx.TimeoutException:
         logger.error("scrape.timeout", extra={"url": url})
-        raise ScrapeError(f"Scraping timeout after {SCRAPE_TIMEOUT}s")
+        raise ScrapeError(f"Scraping timeout after {settings.SCRAPE_TIMEOUT}s")
 
     except httpx.HTTPStatusError as e:
         logger.error(

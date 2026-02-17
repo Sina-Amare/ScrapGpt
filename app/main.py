@@ -49,27 +49,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     print(f"🚀 Starting {settings.APP_NAME}...")
     print(f"📍 Environment: {settings.ENVIRONMENT}")
     print(f"🔧 Debug mode: {settings.DEBUG}")
-    
-    # TODO: Add startup tasks here:
-    # - Database connection pool initialization
-    # - Cache warming
-    # - Background task scheduler startup
-    
+
+    # Start background scheduler
+    from app.core.scheduler import start_scheduler
+    start_scheduler()
+    print("⏰ Scheduler started")
+
     yield  # Application runs here
-    
+
     # -------------------------------------------------------------------------
     # Shutdown
     # -------------------------------------------------------------------------
     print(f"🛑 Shutting down {settings.APP_NAME}...")
-    
+
+    # Stop scheduler
+    from app.core.scheduler import stop_scheduler
+    stop_scheduler()
+
     # Close database connections
     await close_db()
-    
-    # TODO: Add cleanup tasks here:
-    # - Close Redis connections
-    # - Stop background task scheduler
-    # - Flush logs
-    
+
     print("👋 Shutdown complete")
 
 
@@ -104,7 +103,7 @@ def create_app() -> FastAPI:
     # -------------------------------------------------------------------------
     # Middleware
     # -------------------------------------------------------------------------
-    
+
     # CORS Middleware
     # Allows cross-origin requests from specified origins
     app.add_middleware(
@@ -114,11 +113,14 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
-    # TODO: Add additional middleware here:
-    # - Rate limiting middleware
-    # - Request logging middleware
-    # - Timing middleware
+
+    # Rate Limiting Middleware
+    from slowapi import _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+    from app.core.rate_limit import limiter
+
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     
     # -------------------------------------------------------------------------
     # Routes

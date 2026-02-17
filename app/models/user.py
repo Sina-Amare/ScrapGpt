@@ -30,10 +30,10 @@ if TYPE_CHECKING:
 class User(TimestampMixin, Base):
     """
     User model for the ScrapGPT platform.
-    
+
     Handles authentication and daily credit management.
-    Credits reset lazily - when checked after 24 hours have passed.
-    
+    Credits reset at 00:00 UTC daily via scheduled job.
+
     Attributes:
         id: Primary key
         email: Unique login identifier
@@ -43,7 +43,7 @@ class User(TimestampMixin, Base):
         credits_remaining: Current available credits
         daily_credit_limit: Max credits per day (allows per-user limits)
         credits_reset_at: When credits were last reset (UTC)
-    
+
     Example:
         >>> user = User(email="test@example.com", hashed_password="...")
         >>> user.credits_remaining
@@ -141,91 +141,74 @@ class User(TimestampMixin, Base):
     # -------------------------------------------------------------------------
     # Methods
     # -------------------------------------------------------------------------
-    
+
     def __repr__(self) -> str:
         """String representation for debugging."""
         return f"<User {self.email}>"
-    
+
     def ensure_credits_reset(self) -> bool:
         """
-        Reset credits if 24 hours have passed since last reset.
-        
-        This implements "lazy reset" - credits are only reset when
-        this method is called, not via a scheduled job.
-        
-        Returns:
-            bool: True if credits were reset, False otherwise
-            
-        Example:
-            >>> user.ensure_credits_reset()
-            True  # Credits were reset
-            >>> user.ensure_credits_reset()
-            False  # Less than 24h since last reset
+        DEPRECATED: Credits now reset at 00:00 UTC via scheduler.
+
+        This method is kept for backwards compatibility but should not be used.
+        It always returns False since lazy reset is no longer the policy.
         """
-        now = datetime.now(timezone.utc)
-        seconds_since_reset = (now - self.credits_reset_at).total_seconds()
-        
-        # 86400 seconds = 24 hours
-        if seconds_since_reset >= 86400:
-            self.credits_remaining = self.daily_credit_limit
-            self.credits_reset_at = now
-            return True
-        
+        import warnings
+        warnings.warn(
+            "ensure_credits_reset is deprecated. "
+            "Credits reset at 00:00 UTC via scheduler.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return False
-    
+
     def use_credit(self, amount: int = 1) -> bool:
         """
         Consume credits for a scraping operation.
-        
-        Automatically checks for daily reset before consuming.
-        
+
+        NOTE: This method does NOT trigger lazy reset anymore.
+        Credits reset at 00:00 UTC daily via scheduler.
+
         Args:
             amount: Number of credits to consume (default: 1)
-            
+
         Returns:
             bool: True if credits were available and consumed, False otherwise
-            
-        Example:
-            >>> user.credits_remaining = 5
-            >>> user.use_credit()
-            True
-            >>> user.credits_remaining
-            4
-            >>> user.credits_remaining = 0
-            >>> user.use_credit()
-            False
         """
-        # Check for daily reset first
-        self.ensure_credits_reset()
-        
         if self.credits_remaining >= amount:
             self.credits_remaining -= amount
             return True
-        
         return False
-    
+
     @property
     def has_credits(self) -> bool:
         """
         Check if user has any remaining credits.
-        
-        Automatically triggers daily reset check.
-        
+
+        NOTE: Does NOT trigger lazy reset - credits reset at 00:00 UTC.
+
         Returns:
             bool: True if credits are available
         """
-        self.ensure_credits_reset()
         return self.credits_remaining > 0
-    
+
     @property
     def seconds_until_reset(self) -> float:
         """
         Calculate seconds remaining until next credit reset.
-        
+
+        Credits reset at 00:00 UTC daily.
+
         Returns:
-            float: Seconds until reset (0 if reset is available now)
+            float: Seconds until next 00:00 UTC
         """
+        from datetime import datetime, timezone
+
         now = datetime.now(timezone.utc)
-        seconds_since_reset = (now - self.credits_reset_at).total_seconds()
-        remaining = 86400 - seconds_since_reset
-        return max(0, remaining)
+        # Calculate seconds until next midnight UTC
+        seconds_today = (
+            now.hour * 3600 + now.minute * 60 + now.second
+        )
+        seconds_in_day = 86400
+        return seconds_in_day - seconds_today
+
