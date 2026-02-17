@@ -89,10 +89,23 @@ lxml~=5.3.0
 httpx~=0.28.0
 
 # -----------------------------------------------------------------------------
-# Development & Testing (uncomment as needed)
+# Background Jobs
 # -----------------------------------------------------------------------------
-# pytest~=8.3.0                 # Testing framework
-# pytest-asyncio~=0.24.0        # Async test support
-# httpx~=0.27.0                 # Async HTTP client for testing
-# ruff~=0.8.0                   # Fast Python linter
-# mypy~=1.13.0                  # Static type checker
+# APScheduler: Advanced Python Scheduler
+# - Used for scheduled credit reset and watchdog cleanup
+apscheduler~=3.10.0
+
+# -----------------------------------------------------------------------------
+# Rate Limiting
+# -----------------------------------------------------------------------------
+# SlowAPI: Rate limiting for FastAPI
+# - Production-ready, based on flask-limiter
+slowapi~=0.1.9
+
+# -----------------------------------------------------------------------------
+# Development & Testing
+# -----------------------------------------------------------------------------
+pytest~=8.3.0                  # Testing framework
+pytest-asyncio~=0.24.0         # Async test support
+# ruff~=0.8.0                  # Fast Python linter
+# mypy~=1.13.0                 # Static type checker

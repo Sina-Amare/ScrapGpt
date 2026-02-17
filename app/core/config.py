@@ -99,13 +99,44 @@ class Settings(BaseSettings):
     # Scraping Settings
     # -------------------------------------------------------------------------
     SCRAPE_TIMEOUT: int = Field(default=30, ge=5, le=300)
+    LLM_TIMEOUT: int = Field(default=120, ge=10, le=600)
+    READINESS_TIMEOUT_SECONDS: float = Field(default=2.0, ge=0.5, le=10.0)
     MAX_CONCURRENT_JOBS: int = Field(default=5, ge=1, le=50)
     USER_AGENT: str = "ScrapGPT/1.0"
-    
+
+    # -------------------------------------------------------------------------
+    # Watchdog Settings
+    # -------------------------------------------------------------------------
+    WATCHDOG_SCRAPING_TIMEOUT_MINUTES: int = Field(default=5, ge=1, le=30)
+    WATCHDOG_LLM_TIMEOUT_MINUTES: int = Field(default=10, ge=2, le=60)
+    WATCHDOG_PERMISSION_GRANTED_TIMEOUT_MINUTES: int = Field(
+        default=3, ge=1, le=10,
+        description="Timeout for tasks stuck in PERMISSION_GRANTED"
+    )
+
+    # -------------------------------------------------------------------------
+    # Rate Limiting Settings
+    # -------------------------------------------------------------------------
+    RATE_LIMIT_PER_MINUTE: int = Field(
+        default=60, ge=1, le=1000,
+        description="Default rate limit per minute"
+    )
+    RATE_LIMIT_SCRAPE_PER_MINUTE: int = Field(
+        default=10, ge=1, le=100,
+        description="Rate limit for /scrape/start per minute"
+    )
+    RATE_LIMIT_AUTH_PER_MINUTE: int = Field(
+        default=5, ge=1, le=30,
+        description="Rate limit for auth endpoints per minute"
+    )
+
     # -------------------------------------------------------------------------
     # Logging Settings
     # -------------------------------------------------------------------------
-    LOG_LEVEL: str = Field(default="INFO", pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
+    LOG_LEVEL: str = Field(
+        default="INFO",
+        pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$"
+    )
     LOG_FORMAT: str = Field(default="text", pattern="^(json|text)$")
     
     # -------------------------------------------------------------------------

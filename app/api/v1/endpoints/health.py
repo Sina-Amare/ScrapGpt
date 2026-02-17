@@ -10,12 +10,13 @@ Health check endpoints should be fast and not require authentication.
 """
 
 from fastapi import APIRouter, Depends, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.core.config import settings
+from app.services.readiness import check_db_ready
 
 
 router = APIRouter(tags=["Health"])
@@ -71,41 +72,44 @@ async def health_check() -> HealthResponse:
 @router.get(
     "/health/ready",
     response_model=HealthDetailResponse,
-    status_code=status.HTTP_200_OK,
     summary="Readiness check with dependencies",
-    description="Checks if the API and all its dependencies (database, etc.) are ready to serve traffic.",
+    description="Checks if the API and all dependencies are ready. Returns 503 if not ready.",
+    responses={
+        200: {"description": "Ready to receive traffic"},
+        503: {"description": "Not ready - DB unavailable or migrations pending"},
+    },
 )
 async def readiness_check(
     db: AsyncSession = Depends(get_db),
 ) -> HealthDetailResponse:
     """
     Readiness check endpoint.
-    
-    This endpoint verifies that:
-    - The API is running
-    - Database is connected and responding
-    
+
+    Returns 200 ONLY if instance is safe to receive traffic:
+    - Database is connected
+    - Core schema/migrations are compatible
+
+    Returns 503 if any dependency is unavailable.
+
     Use this for Kubernetes readiness probes or load balancer health checks.
-    
-    Args:
-        db: Database session (injected)
-        
-    Returns:
-        HealthDetailResponse: Detailed status of all components
     """
-    # Check database connectivity
-    try:
-        await db.execute(text("SELECT 1"))
-        db_status = "connected"
-    except Exception as e:
-        db_status = f"error: {str(e)}"
-    
-    return HealthDetailResponse(
-        status="healthy" if db_status == "connected" else "degraded",
-        environment=settings.ENVIRONMENT,
-        version="0.1.0",
-        database=db_status,
-    )
+    readiness = await check_db_ready(db, settings.READINESS_TIMEOUT_SECONDS)
+    is_ready = readiness.ready
+
+    response_data = {
+        "status": "ready" if is_ready else "not_ready",
+        "environment": settings.ENVIRONMENT,
+        "version": "0.1.0",
+        "database": readiness.code,
+    }
+
+    if not is_ready:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=response_data,
+        )
+
+    return HealthDetailResponse(**response_data)
 
 
 @router.get(
