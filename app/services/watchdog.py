@@ -7,12 +7,13 @@ Detects and fails tasks stuck in non-terminal states.
 import logging
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.database import async_session_factory
 from app.models.scrape_task import ScrapeTask, TaskState
+from app.services.task_state import transition_to_failed
 
 
 logger = logging.getLogger(__name__)
@@ -41,20 +42,17 @@ async def cleanup_stuck_tasks() -> int:
         result = await db.execute(
             select(ScrapeTask).where(
                 ScrapeTask.state == TaskState.PERMISSION_GRANTED,
-                ScrapeTask.updated_at < pg_cutoff,
+                func.coalesce(ScrapeTask.updated_at, ScrapeTask.created_at) < pg_cutoff,
             )
         )
         stuck_pg = result.scalars().all()
 
         for task in stuck_pg:
-            task.state = TaskState.FAILED
             mins = settings.WATCHDOG_PERMISSION_GRANTED_TIMEOUT_MINUTES
-            task.error = f"Watchdog: Pipeline did not start within {mins}m"
-            logger.warning(
-                "watchdog.stuck_task",
-                extra={"task_id": task.id, "state": "PERMISSION_GRANTED"},
-            )
-            cleaned += 1
+            error_msg = f"Watchdog: Pipeline did not start within {mins}m"
+            res = await transition_to_failed(task.id, error_msg)
+            if res.success:
+                cleaned += 1
 
         # Find tasks stuck in SCRAPING
         scraping_cutoff = now - timedelta(
@@ -63,20 +61,17 @@ async def cleanup_stuck_tasks() -> int:
         result = await db.execute(
             select(ScrapeTask).where(
                 ScrapeTask.state == TaskState.SCRAPING,
-                ScrapeTask.updated_at < scraping_cutoff,
+                func.coalesce(ScrapeTask.updated_at, ScrapeTask.created_at) < scraping_cutoff,
             )
         )
         stuck_scraping = result.scalars().all()
 
         for task in stuck_scraping:
-            task.state = TaskState.FAILED
             mins = settings.WATCHDOG_SCRAPING_TIMEOUT_MINUTES
-            task.error = f"Watchdog: Stuck in SCRAPING for >{mins}m"
-            logger.warning(
-                "watchdog.stuck_task",
-                extra={"task_id": task.id, "state": "SCRAPING"},
-            )
-            cleaned += 1
+            error_msg = f"Watchdog: Stuck in SCRAPING for >{mins}m"
+            res = await transition_to_failed(task.id, error_msg)
+            if res.success:
+                cleaned += 1
 
         # Find tasks stuck in LLM_PROCESSING
         llm_cutoff = now - timedelta(
@@ -85,23 +80,19 @@ async def cleanup_stuck_tasks() -> int:
         result = await db.execute(
             select(ScrapeTask).where(
                 ScrapeTask.state == TaskState.LLM_PROCESSING,
-                ScrapeTask.updated_at < llm_cutoff,
+                func.coalesce(ScrapeTask.updated_at, ScrapeTask.created_at) < llm_cutoff,
             )
         )
         stuck_llm = result.scalars().all()
 
         for task in stuck_llm:
-            task.state = TaskState.FAILED
             mins = settings.WATCHDOG_LLM_TIMEOUT_MINUTES
-            task.error = f"Watchdog: Stuck in LLM_PROCESSING for >{mins}m"
-            logger.warning(
-                "watchdog.stuck_task",
-                extra={"task_id": task.id, "state": "LLM_PROCESSING"},
-            )
-            cleaned += 1
+            error_msg = f"Watchdog: Stuck in LLM_PROCESSING for >{mins}m"
+            res = await transition_to_failed(task.id, error_msg)
+            if res.success:
+                cleaned += 1
 
         if cleaned > 0:
-            await db.commit()
             logger.info("watchdog.cleanup_complete", extra={"cleaned": cleaned})
 
     return cleaned

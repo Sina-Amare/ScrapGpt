@@ -7,12 +7,13 @@ Endpoints:
     POST /auth/refresh - Refresh access token using refresh token
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.core.rate_limit import limiter, AUTH_RATE_LIMIT
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -45,8 +46,10 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
     summary="Register a new user",
     description="Create a new user account with email and password.",
 )
+@limiter.limit(AUTH_RATE_LIMIT)
 async def register(
-    request: UserRegisterRequest,
+    request: Request,
+    payload: UserRegisterRequest,
     db: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
     """
@@ -55,7 +58,8 @@ async def register(
     Creates a new user account and returns JWT tokens for immediate login.
 
     Args:
-        request: Registration data (email, password)
+        request: FastAPI request used by the rate limiter
+        payload: Registration data (email, password)
         db: Database session
 
     Returns:
@@ -66,7 +70,7 @@ async def register(
     """
     # Check if email already exists
     result = await db.execute(
-        select(User).where(User.email == request.email)
+        select(User).where(User.email == payload.email)
     )
     existing_user = result.scalar_one_or_none()
 
@@ -78,8 +82,8 @@ async def register(
 
     # Create new user
     user = User(
-        email=request.email,
-        hashed_password=hash_password(request.password),
+        email=payload.email,
+        hashed_password=hash_password(payload.password),
     )
     db.add(user)
     await db.commit()
@@ -108,7 +112,9 @@ async def register(
     summary="Login user",
     description="Login with username (email) and password. Returns JWT tokens.",
 )
+@limiter.limit(AUTH_RATE_LIMIT)
 async def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
@@ -119,6 +125,7 @@ async def login(
     This format is required for Swagger UI compatibility.
 
     Args:
+        request: FastAPI request used by the rate limiter
         form_data: OAuth2 form with username (email) and password
         db: Database session
 
@@ -170,8 +177,10 @@ async def login(
     summary="Refresh access token",
     description="Get a new access token using a valid refresh token.",
 )
+@limiter.limit(AUTH_RATE_LIMIT)
 async def refresh_token(
-    request: TokenRefreshRequest,
+    request: Request,
+    payload: TokenRefreshRequest,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
     """
@@ -181,7 +190,8 @@ async def refresh_token(
     without requiring re-authentication.
 
     Args:
-        request: Refresh token data
+        request: FastAPI request used by the rate limiter
+        payload: Refresh token data
         db: Database session
 
     Returns:
@@ -191,9 +201,9 @@ async def refresh_token(
         HTTPException 401: If refresh token is invalid or expired
     """
     # Verify refresh token
-    payload = verify_token(request.refresh_token, token_type="refresh")
+    token_payload = verify_token(payload.refresh_token, token_type="refresh")
 
-    if not payload:
+    if not token_payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
@@ -201,7 +211,14 @@ async def refresh_token(
         )
 
     # Verify user still exists and is active
-    user_id = int(payload.sub)
+    try:
+        user_id = int(token_payload.sub)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid subject in token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     result = await db.execute(
         select(User).where(User.id == user_id)
     )

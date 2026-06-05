@@ -10,6 +10,7 @@ from slowapi.util import get_remote_address
 from fastapi import Request
 
 from app.core.config import settings
+from app.core.security import verify_token
 
 
 def get_user_identifier(request: Request) -> str:
@@ -20,10 +21,13 @@ def get_user_identifier(request: Request) -> str:
     1. Authenticated user ID (from JWT)
     2. IP address (for unauthenticated requests)
     """
-    # Try to get user from request state (set by auth dependency)
-    user = getattr(request.state, "user", None)
-    if user and hasattr(user, "id"):
-        return f"user:{user.id}"
+    # Try to extract JWT from Authorization header
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+        payload = verify_token(token, token_type="access")
+        if payload:
+            return f"user:{payload.sub}"
 
     # Fall back to IP address
     return get_remote_address(request)

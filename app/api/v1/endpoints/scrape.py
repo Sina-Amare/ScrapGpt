@@ -62,11 +62,11 @@ class TaskResponse(BaseModel):
 )
 @limiter.limit(SCRAPE_RATE_LIMIT)
 async def start_scrape(
-    request: StartScrapeRequest,
+    request: Request,
+    payload: StartScrapeRequest,
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    fastapi_request: Request = None,
 ) -> TaskResponse:
     """
     Start a new scrape task.
@@ -77,7 +77,7 @@ async def start_scrape(
 
     User can poll GET /tasks/{id} for status.
     """
-    url_str = str(request.url)
+    url_str = str(payload.url)
 
     result = await admit_scrape_task(user, url_str, db)
 
@@ -122,6 +122,40 @@ async def start_scrape(
 
 
 @router.get(
+    "/tasks/current",
+    response_model=TaskResponse,
+    summary="Get current active task",
+    description="Get the user's current non-terminal task, if any.",
+)
+async def get_current_task(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TaskResponse:
+    """Get user's current active task."""
+    result = await db.execute(
+        select(ScrapeTask).where(
+            ScrapeTask.user_id == user.id,
+            ScrapeTask.state.notin_(TERMINAL_STATES),
+        )
+    )
+    task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active task",
+        )
+
+    return TaskResponse(
+        task_id=task.id,
+        state=task.state.value,
+        url=task.url,
+        error=task.error,
+        result=task.result,
+    )
+
+
+@router.get(
     "/tasks/{task_id}",
     response_model=TaskResponse,
     summary="Get task status",
@@ -139,40 +173,6 @@ async def get_task(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Task not found",
-        )
-
-    return TaskResponse(
-        task_id=task.id,
-        state=task.state.value,
-        url=task.url,
-        error=task.error,
-        result=task.result,
-    )
-
-
-@router.get(
-    "/tasks/current",
-    response_model=TaskResponse | None,
-    summary="Get current active task",
-    description="Get the user's current non-terminal task, if any.",
-)
-async def get_current_task(
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> TaskResponse | None:
-    """Get user's current active task."""
-    result = await db.execute(
-        select(ScrapeTask).where(
-            ScrapeTask.user_id == user.id,
-            ScrapeTask.state.notin_(TERMINAL_STATES),
-        )
-    )
-    task = result.scalar_one_or_none()
-
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No active task",
         )
 
     return TaskResponse(
