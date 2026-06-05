@@ -43,61 +43,59 @@ async def execute_scrape_pipeline(task_id: int, user_id: int) -> None:
     )
 
     try:
+        # Get URL from task in a short-lived session
         async with async_session_factory() as db:
-            # Get URL from task
             task = await db.get(ScrapeTask, task_id)
             if not task:
                 logger.error("pipeline.task_not_found", extra={"task_id": task_id})
                 return
-
             url = task.url
 
-            # Phase 1: Transition to SCRAPING
-            result = await transition_to_scraping(task_id, db)
-            if not result.success:
-                logger.error(
-                    "pipeline.transition_failed",
-                    extra={"task_id": task_id, "error": result.error},
-                )
-                return
+        # Phase 1: Transition to SCRAPING
+        result = await transition_to_scraping(task_id)
+        if not result.success:
+            logger.error(
+                "pipeline.transition_failed",
+                extra={"task_id": task_id, "error": result.error},
+            )
+            return
 
-            # Phase 2: Scrape URL
-            try:
-                content = await scrape_url(url)
-            except ScrapeError as e:
-                await transition_to_failed(task_id, f"Scraping failed: {e.message}", db)
-                return
+        # Phase 2: Scrape URL
+        try:
+            content = await scrape_url(url)
+        except ScrapeError as e:
+            await transition_to_failed(task_id, f"Scraping failed: {e.message}")
+            return
 
-            # Phase 3: Transition to SCRAPED
-            result = await transition_to_scraped(task_id, content, db)
-            if not result.success:
-                await transition_to_failed(task_id, result.error, db)
-                return
+        # Phase 3: Transition to SCRAPED
+        result = await transition_to_scraped(task_id, content)
+        if not result.success:
+            await transition_to_failed(task_id, result.error)
+            return
 
-            # Phase 4: Transition to LLM_PROCESSING (with credit deduction)
-            result = await transition_to_llm_processing(task_id, user_id, db)
-            if not result.success:
-                # Already marked FAILED in transition if no credits
-                return
+        # Phase 4: Transition to LLM_PROCESSING (with credit deduction)
+        result = await transition_to_llm_processing(task_id, user_id)
+        if not result.success:
+            # Already marked FAILED in transition if no credits
+            return
 
-            # Phase 5: LLM Processing
-            try:
-                llm_result = await process_with_llm(content)
-            except LLMError as e:
-                await transition_to_failed(
-                    task_id,
-                    f"LLM processing failed: {str(e)}",
-                    db,
-                )
-                return
+        # Phase 5: LLM Processing
+        try:
+            llm_result = await process_with_llm(content)
+        except LLMError as e:
+            await transition_to_failed(
+                task_id,
+                f"LLM processing failed: {str(e)}",
+            )
+            return
 
-            # Phase 6: Complete
-            result = await transition_to_completed(task_id, llm_result, db)
-            if not result.success:
-                await transition_to_failed(task_id, result.error, db)
-                return
+        # Phase 6: Complete
+        result = await transition_to_completed(task_id, llm_result)
+        if not result.success:
+            await transition_to_failed(task_id, result.error)
+            return
 
-            logger.info("pipeline.completed", extra={"task_id": task_id})
+        logger.info("pipeline.completed", extra={"task_id": task_id})
 
     except Exception as e:
         # Catch-all: ensure task is marked FAILED
@@ -106,7 +104,6 @@ async def execute_scrape_pipeline(task_id: int, user_id: int) -> None:
             extra={"task_id": task_id, "error": str(e)},
         )
         try:
-            async with async_session_factory() as db:
-                await transition_to_failed(task_id, f"Unexpected error: {str(e)}", db)
+            await transition_to_failed(task_id, f"Unexpected error: {str(e)}")
         except Exception:
             logger.exception("pipeline.failed_to_mark_failed", extra={"task_id": task_id})
