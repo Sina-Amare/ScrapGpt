@@ -80,7 +80,7 @@ async def execute_scrape_pipeline(task_id: int, user_id: int) -> None:
 
         # Phase 5: LLM Processing
         try:
-            llm_result = await process_with_llm(content)
+            llm_result = await process_with_llm(content, user_id)
         except LLMError as e:
             await transition_to_failed(
                 task_id,

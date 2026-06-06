@@ -44,3 +44,4 @@ limiter = Limiter(
 # Rate limit decorators for specific endpoints
 SCRAPE_RATE_LIMIT = f"{settings.RATE_LIMIT_SCRAPE_PER_MINUTE}/minute"
 AUTH_RATE_LIMIT = f"{settings.RATE_LIMIT_AUTH_PER_MINUTE}/minute"
+PROVIDER_REVEAL_RATE_LIMIT = f"{settings.RATE_LIMIT_AUTH_PER_MINUTE}/minute"

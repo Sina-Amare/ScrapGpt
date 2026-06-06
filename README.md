@@ -1,6 +1,6 @@
 # ScrapGPT
 
-An async FastAPI backend for authenticated, credit-gated URL scraping with an LLM post-processing stage.
+An async FastAPI and React application for authenticated, BYOK URL scraping with an LLM post-processing stage.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)](https://fastapi.tiangolo.com)
@@ -12,11 +12,11 @@ An async FastAPI backend for authenticated, credit-gated URL scraping with an LL
 
 1. User registers / logs in (JWT).
 2. User submits a URL via `POST /api/v1/scrape/start`.
-3. Server admits the task (one active task per user, credit ≥ 1) and returns `202 Accepted` with a `task_id`.
+3. Server admits the task using configurable per-user concurrency limits and returns `202 Accepted` with a `task_id`.
 4. A background pipeline drives the task through a state machine: `PERMISSION_GRANTED → SCRAPING → SCRAPED → LLM_PROCESSING → COMPLETED` (or `FAILED` from any non-terminal state).
 5. User polls `GET /api/v1/scrape/tasks/{task_id}` for status and final result.
 
-Credits reset daily at 00:00 UTC via an APScheduler job that uses a `system_state` row as a check-and-set lock (multi-instance safe). A second scheduled job (the watchdog) fails tasks stuck in non-terminal states past configurable timeouts.
+Users configure their own AI provider keys. Keys are encrypted at rest; normal provider responses never include key material. A user can explicitly reveal their own stored key only after password confirmation.
 
 ## Tech stack
 
@@ -57,11 +57,16 @@ cp .env.example .env
 createdb scrapegpt
 alembic upgrade head
 
-# 5. Run
-uvicorn app.main:app --reload
+# 5. Run backend on Windows
+venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+
+# 6. Run frontend on Windows, in another terminal
+cd frontend
+npm install
+npm run dev
 ```
 
-Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for Swagger UI.
+Open [http://localhost:5173](http://localhost:5173) for the app and [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for Swagger UI.
 
 ## API surface
 
@@ -83,15 +88,25 @@ All routes are under `/api/v1`.
 | POST   | `/auth/login`    | no   | OAuth2 form login; returns token pair      |
 | POST   | `/auth/refresh`  | no   | Exchange refresh token for new access token |
 
+### Providers
+
+| Method | Path                                | Auth | Description                                      |
+| ------ | ----------------------------------- | ---- | ------------------------------------------------ |
+| GET    | `/providers`                        | yes  | List provider configs without key material       |
+| POST   | `/providers`                        | yes  | Create provider config; key is encrypted         |
+| PATCH  | `/providers/{provider_id}`          | yes  | Update metadata or replace key                   |
+| DELETE | `/providers/{provider_id}`          | yes  | Delete provider config                           |
+| POST   | `/providers/{provider_id}/test`     | yes  | Test provider connectivity and JSON capability   |
+| POST   | `/providers/{provider_id}/reveal-key` | yes | Reveal own key after password confirmation       |
+
 ### Scraping
 
 | Method | Path                       | Auth | Description                                          |
 | ------ | -------------------------- | ---- | ---------------------------------------------------- |
 | POST   | `/scrape/start`            | yes  | Admit + queue a scrape task (returns 202)            |
+| GET    | `/scrape/tasks`            | yes  | List user's tasks, newest first                      |
 | GET    | `/scrape/tasks/{task_id}`  | yes  | Get task status (owner-only, 404 otherwise)          |
 | GET    | `/scrape/tasks/current`    | yes  | Get the user's current non-terminal task (404 if none) |
-
-> ⚠️ Two known endpoint-wiring bugs affect the scrape routes today (SlowAPI parameter collision and route-order shadowing). See [docs/STATUS.md](docs/STATUS.md#critical--high-bugs).
 
 ## Project structure
 
@@ -111,29 +126,31 @@ scrapegpt/
 │   │   ├── config.py              # Pydantic Settings (env-driven)
 │   │   ├── security.py            # bcrypt hash + JWT issue/verify
 │   │   ├── rate_limit.py          # SlowAPI limiter + key fn
-│   │   └── scheduler.py           # APScheduler: daily credit reset + watchdog
+│   │   └── scheduler.py           # APScheduler watchdog
 │   ├── db/
 │   │   └── database.py            # async engine, sessionmaker, close_db
 │   ├── models/
 │   │   ├── base.py                # Declarative Base
-│   │   ├── user.py                # users (auth + credits)
+│   │   ├── user.py                # users (auth + default provider)
+│   │   ├── provider_config.py     # encrypted BYOK provider configs
 │   │   └── scrape_task.py         # scrape_tasks + TaskState enum + transitions
 │   ├── schemas/
 │   │   ├── auth.py                # register/login/token DTOs
 │   │   └── scrape.py              # scrape DTOs
 │   └── services/
-│       ├── admission.py           # one-active-task + credit gating
-│       ├── task_state.py          # explicit transition fns (atomic credit deduct in LLM phase)
+│       ├── admission.py           # per-user active task limit
+│       ├── provider_service.py    # provider config, encryption, LiteLLM wrapper
+│       ├── task_state.py          # explicit transition fns
 │       ├── task_executor.py       # pipeline orchestrator (always-finalize)
 │       ├── scraper.py             # httpx + BeautifulSoup fetch/extract
-│       ├── llm_processor.py       # ⚠️ STUB — returns mock dict
+│       ├── llm_processor.py       # BYOK LLM analysis
 │       ├── readiness.py           # bounded DB readiness probe
 │       └── watchdog.py            # fails tasks stuck past timeout
 ├── alembic/versions/
 │   ├── 001_create_users.py
 │   ├── 002_create_scrape_tasks.py # ⚠️ legacy enum values; see STATUS
 │   ├── 003_update_task_states.py  # current enum + partial unique idx
-│   └── 004_system_state.py        # check-and-set table for credit reset
+│   └── 005_provider_foundation.py # credit removal + BYOK providers
 ├── docs/
 │   ├── architecture.md            # System design overview
 │   ├── STATUS.md                  # Where to continue from (punch list)
@@ -141,7 +158,8 @@ scrapegpt/
 │   ├── ops/health.md              # Health/readiness operations notes
 │   ├── learning/                  # Decision logs (01–04)
 │   └── reviews/                   # Self-review notes per feature
-├── tests/                         # ⚠️ skeleton only — health + readiness only
+├── frontend/                      # React control surface
+├── tests/                         # backend pytest suite
 ├── requirements.txt
 └── .env.example
 ```
@@ -158,8 +176,9 @@ All settings come from `.env` and are validated at startup by `app/core/config.p
 | `SECRET_KEY`                                   | placeholder (warns)                      | JWT signing key — **must change for production**         |
 | `ACCESS_TOKEN_EXPIRE_MINUTES`                  | `15`                                     | Access token TTL                                         |
 | `REFRESH_TOKEN_EXPIRE_DAYS`                    | `7`                                      | Refresh token TTL                                        |
-| `DEFAULT_DAILY_CREDITS`                        | `5`                                      | Daily allowance for new users                            |
-| `SCRAPE_CREDIT_COST`                           | `1`                                      | Credits deducted per task (deducted at LLM phase)        |
+| `PROVIDER_KEY_ENCRYPTION_SECRET`               | required                                 | Fernet key for provider API-key encryption               |
+| `MAX_CONCURRENT_JOBS_PER_USER`                 | `3`                                      | Active scrape jobs allowed per user                      |
+| `MAX_PAGES_PER_JOB` / `CRAWL_CONCURRENCY`      | `500` / `3`                              | Future crawler resource controls                         |
 | `SCRAPE_TIMEOUT` / `LLM_TIMEOUT`               | `30` / `120`                             | Per-stage HTTP / LLM timeouts (seconds)                  |
 | `WATCHDOG_*_TIMEOUT_MINUTES`                   | `3` / `5` / `10`                         | Stuck-task thresholds for PERMISSION_GRANTED / SCRAPING / LLM_PROCESSING |
 | `RATE_LIMIT_PER_MINUTE` / `_SCRAPE_` / `_AUTH_`| `60` / `10` / `5`                        | SlowAPI limits                                           |
@@ -171,10 +190,22 @@ See [.env.example](.env.example) for the full list.
 
 ```bash
 # Run dev server (auto-reload)
-uvicorn app.main:app --reload
+venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
-# Run tests (currently only health + readiness)
-pytest -v
+# Run frontend dev server
+cd frontend
+npm install
+npm run dev
+
+# Run backend tests
+venv\Scripts\python.exe -m pytest -q
+
+# Run frontend checks
+cd frontend
+npm run typecheck
+npm run lint
+npm test
+npm run build
 
 # Create a new migration after model edits
 alembic revision --autogenerate -m "your message"
@@ -185,8 +216,8 @@ alembic upgrade head
 
 1. Set `ENVIRONMENT=production` and `DEBUG=false` (this disables `/docs`).
 2. Generate a real `SECRET_KEY`: `openssl rand -hex 32`.
-3. Set `CORS_ORIGINS` to your real frontend origin(s).
-4. Run with multiple workers — but note that **APScheduler runs in-process**. With multiple workers, the credit-reset `system_state` check-and-set still serializes correctly across instances, but the watchdog will fire from each worker. For a single-host deployment this is fine; for multi-host, run the scheduler in a dedicated process.
+3. Set `CORS_ORIGINS` to your real frontend origin(s). For local Vite development, include `http://localhost:5173`.
+4. Run with multiple workers only after deciding how to operate **APScheduler**, which runs in-process. For multi-host deployments, run the scheduler in a dedicated process.
 
 ```bash
 gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker

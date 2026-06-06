@@ -26,6 +26,18 @@ class ProviderConfigUpdate(BaseModel):
     is_default: bool | None = None
 
 
+class ProviderKeyRevealRequest(BaseModel):
+    """Password confirmation required before revealing stored key material."""
+
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+class ProviderKeyRevealResponse(BaseModel):
+    """Plaintext API key returned only from the explicit reveal endpoint."""
+
+    api_key: str
+
+
 class ProviderConfigResponse(BaseModel):
     """Provider config response without API key material."""
 

@@ -46,21 +46,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # -------------------------------------------------------------------------
     # Startup
     # -------------------------------------------------------------------------
-    print(f"🚀 Starting {settings.APP_NAME}...")
-    print(f"📍 Environment: {settings.ENVIRONMENT}")
-    print(f"🔧 Debug mode: {settings.DEBUG}")
+    print(f"Starting {settings.APP_NAME}...")
+    print(f"Environment: {settings.ENVIRONMENT}")
+    print(f"Debug mode: {settings.DEBUG}")
 
     # Start background scheduler
     from app.core.scheduler import start_scheduler
     start_scheduler()
-    print("⏰ Scheduler started")
+    print("Scheduler started")
 
     yield  # Application runs here
 
     # -------------------------------------------------------------------------
     # Shutdown
     # -------------------------------------------------------------------------
-    print(f"🛑 Shutting down {settings.APP_NAME}...")
+    print(f"Shutting down {settings.APP_NAME}...")
 
     # Stop scheduler
     from app.core.scheduler import stop_scheduler
@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Close database connections
     await close_db()
 
-    print("👋 Shutdown complete")
+    print("Shutdown complete")
 
 
 # -----------------------------------------------------------------------------
