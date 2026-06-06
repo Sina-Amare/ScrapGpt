@@ -191,7 +191,7 @@ provider_configs:
 
 **Key rotation:** To rotate the encryption secret, provide a management command that decrypts all keys with the old secret and re-encrypts with the new one before updating the setting. Do not update the setting without migrating the data first.
 
-API keys are **never returned in API responses** — not even masked — and are **never logged**. Log only `provider_config_id`, provider name, and operation status. The `capability_flags` field stores the provider capability test result (whether structured output, JSON mode, etc. are supported).
+Normal provider responses **never include API keys** — not even masked — and key material is **never logged**. A user may explicitly reveal their own stored key only through a password-confirmed reveal endpoint; the frontend must keep the revealed value in local component state only, never localStorage, query cache, URLs, or logs. Log only `provider_config_id`, provider name, and operation status. The `capability_flags` field stores the provider capability test result (whether structured output, JSON mode, etc. are supported).
 
 ### Scrape Tasks / Jobs (modified)
 
@@ -561,7 +561,7 @@ Sites use CAPTCHAs, bot detection, IP blocks. Mitigation: respect `robots.txt` b
 A 10,000-page crawl can exhaust server resources. Mitigation: `MAX_PAGES_PER_JOB` default 500; `CRAWL_CONCURRENCY` default 3; `MIN_CRAWL_DELAY_MS` default 500ms; document celery/arq worker mode for high-volume deployments.
 
 ### Risk 6: API key security
-Storing third-party API keys in the database is a security responsibility. Mitigation: Fernet encryption using `PROVIDER_KEY_ENCRYPTION_SECRET` (separate from `SECRET_KEY`); **never log API key material** — log only `provider_config_id`, provider name, and operation status; never returned in API responses; HTTPS required for non-localhost deployments; key backup and rotation documented explicitly.
+Storing third-party API keys in the database is a security responsibility. Mitigation: Fernet encryption using `PROVIDER_KEY_ENCRYPTION_SECRET` (separate from `SECRET_KEY`); **never log API key material** — log only `provider_config_id`, provider name, and operation status; normal API responses never include keys; explicit key reveal requires password confirmation and must not cache the plaintext client-side; HTTPS required for non-localhost deployments; key backup and rotation documented explicitly.
 
 ### Risk 7: Key encryption loss
 `PROVIDER_KEY_ENCRYPTION_SECRET` loss = all stored provider API keys permanently unrecoverable. Mitigation: startup validation crashes the app if key is invalid; warn in setup docs and `.env.example`; provide a key rotation management command; recommend storing this value in a password manager separate from the database backup.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Sequence
 
@@ -20,6 +21,13 @@ from app.schemas.provider import ProviderConfigCreate, ProviderConfigUpdate
 
 logger = logging.getLogger(__name__)
 PROVIDER_CONFIG_LOCK_NAMESPACE = 47005
+REDACTED_SECRET = "[REDACTED_SECRET]"
+_SECRET_PATTERNS = (
+    re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(r"(?i)((?:api[_-]?key|x-api-key|authorization)\s*[:=]\s*)[^\s,;]+"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{6,}\b"),
+    re.compile(r"\bsk-proj-[A-Za-z0-9_-]{6,}\b"),
+)
 
 
 class ProviderServiceError(Exception):
@@ -65,6 +73,46 @@ def encrypt_api_key(api_key: str) -> str:
 def decrypt_api_key(api_key_encrypted: str) -> str:
     """Decrypt a provider API key for one provider call."""
     return _fernet().decrypt(api_key_encrypted.encode("utf-8")).decode("utf-8")
+
+
+def redact_provider_secret(value: object, secrets: Sequence[str | None] = ()) -> str:
+    """Remove known provider secrets from text before logging, prompting, or returning."""
+    text = str(value)
+    for secret in secrets:
+        if secret and len(secret) >= 4:
+            text = text.replace(secret, REDACTED_SECRET)
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub(
+            lambda match: (
+                f"{match.group(1)}{REDACTED_SECRET}"
+                if match.lastindex
+                else REDACTED_SECRET
+            ),
+            text,
+        )
+    return text
+
+
+def safe_provider_error_message(error: BaseException | str, api_key: str | None = None) -> str:
+    """Return a useful provider error message without leaking key material."""
+    raw = str(error) or (
+        error.__class__.__name__ if isinstance(error, BaseException) else "Provider error"
+    )
+    redacted = redact_provider_secret(raw, [api_key])
+    lower = redacted.lower()
+
+    if any(token in lower for token in ("invalid api key", "incorrect api key", "unauthorized")):
+        return "Authentication failed"
+    if any(token in lower for token in ("authentication", "permission denied", "forbidden")):
+        return "Authentication failed"
+    if any(token in lower for token in ("rate limit", "429", "too many requests")):
+        return "Rate limited"
+    if any(token in lower for token in ("timeout", "timed out")):
+        return "Provider timeout"
+    if any(token in lower for token in ("json", "schema", "validation")):
+        return "Invalid JSON response"
+
+    return redacted
 
 
 async def list_provider_configs(db: AsyncSession, user_id: int) -> Sequence[ProviderConfig]:
@@ -283,7 +331,8 @@ async def _completion(
     except ProviderServiceError:
         raise
     except Exception as exc:
-        raise ProviderCallError(exc.__class__.__name__) from exc
+        msg = safe_provider_error_message(exc, api_key)
+        raise ProviderCallError(msg) from exc
 
 
 def extract_json_payload(raw_response: str) -> Any:
@@ -357,16 +406,21 @@ async def call_json_model(
                 raw_response=raw_response,
             )
         except ProviderCallError as exc:
+            safe_error = safe_provider_error_message(exc, api_key)
             if native_json_available:
                 native_json_available = False
-                last_error = str(exc)
+                last_error = safe_error
                 messages = _strict_json_messages(messages, response_model, last_error)
                 continue
-            raise
+            raise ProviderCallError(safe_error) from exc
         except ProviderJSONError as exc:
             native_json_available = False
-            last_raw_response = exc.raw_response
-            last_error = str(exc)
+            last_raw_response = (
+                redact_provider_secret(exc.raw_response, [api_key])
+                if exc.raw_response is not None
+                else None
+            )
+            last_error = safe_provider_error_message(exc, api_key)
             messages = _strict_json_messages(messages, response_model, last_error)
 
     raise ProviderJSONError(
@@ -406,11 +460,18 @@ async def test_provider_config(
         )
         return True, flags, None
     except Exception as exc:
+        api_key = None
+        try:
+            api_key = decrypt_api_key(provider_config.api_key_encrypted)
+        except Exception:
+            api_key = None
+        error_msg = safe_provider_error_message(exc, api_key)
         flags = {
             "connectivity": False,
             "validated_json": False,
             "native_json": False,
             "error_type": exc.__class__.__name__,
+            "error_detail": error_msg,
         }
         provider_config.capability_flags = flags
         await db.commit()
@@ -423,4 +484,4 @@ async def test_provider_config(
                 "error_type": exc.__class__.__name__,
             },
         )
-        return False, flags, exc.__class__.__name__
+        return False, flags, error_msg

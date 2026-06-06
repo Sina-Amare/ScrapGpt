@@ -64,6 +64,10 @@ async def scrape_url(url: str) -> str:
 
         # Limit content length
         if len(text) > 50000:
+            logger.warning(
+                "scrape.content_truncated",
+                extra={"url": url, "original_length": len(text), "limit": 50000},
+            )
             text = text[:50000]
 
         content = f"Title: {title}\n\n{text}" if title else text

@@ -1,22 +1,27 @@
 """
 Scraping endpoints with async pipeline.
 
-POST /start - Create task and queue for background processing
-GET /tasks/{id} - Get task status
-GET /tasks/current - Get user's current active task
+POST /start          - Create task and queue for background processing
+GET  /tasks          - List user tasks (paginated)
+GET  /tasks/current  - Get user's current active task
+GET  /tasks/{id}     - Get task status + content_length
 """
+
+from datetime import datetime
 
 from fastapi import (
     APIRouter,
     BackgroundTasks,
     Depends,
     HTTPException,
+    Query,
     Request,
     status,
 )
 from pydantic import BaseModel, HttpUrl
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.api.deps import get_db, get_current_user
 from app.core.rate_limit import limiter, SCRAPE_RATE_LIMIT
@@ -33,20 +38,26 @@ from app.services.task_executor import execute_scrape_pipeline
 router = APIRouter(prefix="/scrape", tags=["Scraping"])
 
 
-# Request/Response schemas
 class StartScrapeRequest(BaseModel):
-    """Request to start a scrape task."""
     url: HttpUrl
 
 
 class TaskResponse(BaseModel):
-    """Task status response."""
+    """Task status response.
+
+    content_length is only populated on single-task detail endpoints — the
+    list endpoint defers the content column to avoid loading up to 50 KB per
+    row across 100 rows.
+    """
+
     task_id: int
     state: str
     url: str
     error: str | None = None
     result: dict | None = None
     message: str | None = None
+    created_at: datetime | None = None
+    content_length: int | None = None
 
     class Config:
         from_attributes = True
@@ -98,7 +109,6 @@ async def start_scrape(
 
     task = result.task
 
-    # Queue background processing
     background_tasks.add_task(
         execute_scrape_pipeline,
         task_id=task.id,
@@ -109,8 +119,48 @@ async def start_scrape(
         task_id=task.id,
         state=task.state.value,
         url=task.url,
+        created_at=task.created_at,
         message="Task queued for processing",
     )
+
+
+@router.get(
+    "/tasks",
+    response_model=list[TaskResponse],
+    summary="List user tasks",
+    description="Return the user's tasks, newest first. Supports skip/limit pagination.",
+)
+async def list_tasks(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    skip: int = Query(default=0, ge=0, description="Tasks to skip"),
+    limit: int = Query(default=20, ge=1, le=100, description="Max tasks to return"),
+) -> list[TaskResponse]:
+    """List tasks for the authenticated user, newest first.
+
+    The content column is deferred — content_length is not populated here.
+    Use GET /tasks/{id} to get content_length for a specific task.
+    """
+    result = await db.execute(
+        select(ScrapeTask)
+        .options(defer(ScrapeTask.content))
+        .where(ScrapeTask.user_id == user.id)
+        .order_by(ScrapeTask.created_at.desc())
+        .limit(limit)
+        .offset(skip)
+    )
+    tasks = result.scalars().all()
+    return [
+        TaskResponse(
+            task_id=t.id,
+            state=t.state.value,
+            url=t.url,
+            error=t.error,
+            result=t.result,
+            created_at=t.created_at,
+        )
+        for t in tasks
+    ]
 
 
 @router.get(
@@ -147,6 +197,8 @@ async def get_current_task(
         url=task.url,
         error=task.error,
         result=task.result,
+        created_at=task.created_at,
+        content_length=len(task.content) if task.content else None,
     )
 
 
@@ -176,5 +228,37 @@ async def get_task(
         url=task.url,
         error=task.error,
         result=task.result,
+        created_at=task.created_at,
+        content_length=len(task.content) if task.content else None,
     )
+
+
+@router.delete(
+    "/tasks/{task_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete scrape task",
+    description="Delete a completed or failed scrape task from the database.",
+)
+async def delete_task(
+    task_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete a task owned by the user if it is in a terminal state."""
+    task = await db.get(ScrapeTask, task_id)
+
+    if not task or task.user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    if not task.is_terminal:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete an active task. Wait for it to complete or fail.",
+        )
+
+    await db.delete(task)
+    await db.commit()
 

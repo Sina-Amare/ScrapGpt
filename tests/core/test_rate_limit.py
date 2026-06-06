@@ -5,7 +5,7 @@ from fastapi import Request as FastAPIRequest
 from jose import jwt
 from starlette.requests import Request
 
-from app.api.v1.endpoints import auth
+from app.api.v1.endpoints import auth, providers
 from app.core.config import settings
 from app.core.rate_limit import get_user_identifier, limiter
 from app.core.security import create_access_token
@@ -55,6 +55,22 @@ def test_rate_limit_identifier_ignores_forged_jwt_subject() -> None:
 def test_refresh_endpoint_is_rate_limited_with_request_parameter() -> None:
     signature = inspect.signature(auth.refresh_token)
     endpoint_name = f"{auth.refresh_token.__module__}.{auth.refresh_token.__name__}"
+    route_limits = limiter._route_limits.get(endpoint_name, [])
+
+    assert signature.parameters["request"].annotation is FastAPIRequest
+    assert any(
+        limit.limit.amount == settings.RATE_LIMIT_AUTH_PER_MINUTE
+        and limit.limit.get_expiry() == 60
+        for limit in route_limits
+    )
+
+
+def test_provider_reveal_endpoint_is_rate_limited_with_request_parameter() -> None:
+    signature = inspect.signature(providers.reveal_provider_key)
+    endpoint_name = (
+        f"{providers.reveal_provider_key.__module__}."
+        f"{providers.reveal_provider_key.__name__}"
+    )
     route_limits = limiter._route_limits.get(endpoint_name, [])
 
     assert signature.parameters["request"].annotation is FastAPIRequest

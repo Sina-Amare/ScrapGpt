@@ -1,15 +1,20 @@
 """Provider configuration endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from cryptography.fernet import InvalidToken
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.rate_limit import PROVIDER_REVEAL_RATE_LIMIT, limiter
+from app.core.security import verify_password
 from app.models.user import User
 from app.schemas.provider import (
     ProviderConfigCreate,
     ProviderConfigResponse,
     ProviderConfigUpdate,
+    ProviderKeyRevealRequest,
+    ProviderKeyRevealResponse,
     ProviderTestResponse,
 )
 from app.services import provider_service
@@ -69,7 +74,7 @@ async def create_provider(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ProviderConfigResponse:
-    """Create a provider config. API key is encrypted and never returned."""
+    """Create a provider config. API key is encrypted and not returned here."""
     try:
         provider_config = await provider_service.create_provider_config(db, user.id, payload)
     except IntegrityError:
@@ -115,6 +120,38 @@ async def delete_provider(
     """Delete a provider config scoped to the authenticated user."""
     provider_config = await _get_owned_provider_or_404(provider_id, user, db)
     await provider_service.delete_provider_config(db, user.id, provider_config)
+
+
+@router.post(
+    "/{provider_id}/reveal-key",
+    response_model=ProviderKeyRevealResponse,
+    summary="Reveal provider API key",
+    description="Return the decrypted API key after owner and password confirmation.",
+)
+@limiter.limit(PROVIDER_REVEAL_RATE_LIMIT)
+async def reveal_provider_key(
+    request: Request,
+    provider_id: int,
+    payload: ProviderKeyRevealRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProviderKeyRevealResponse:
+    """Decrypt and return the stored API key after password confirmation."""
+    provider_config = await _get_owned_provider_or_404(provider_id, user, db)
+    if not verify_password(payload.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Password confirmation failed",
+        )
+
+    try:
+        api_key = provider_service.decrypt_api_key(provider_config.api_key_encrypted)
+    except InvalidToken:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to decrypt API key. The encryption key has changed.",
+        )
+    return ProviderKeyRevealResponse(api_key=api_key)
 
 
 @router.post(
