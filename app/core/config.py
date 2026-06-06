@@ -15,6 +15,7 @@ Usage:
 from functools import lru_cache
 from typing import List
 
+from cryptography.fernet import Fernet
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -89,11 +90,14 @@ class Settings(BaseSettings):
         """Parse CORS_ORIGINS string into a list of origins."""
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]
     
-    # -------------------------------------------------------------------------
-    # Rate Limiting & Credits
-    # -------------------------------------------------------------------------
-    DEFAULT_DAILY_CREDITS: int = Field(default=5, ge=1, description="Default daily credits for new users")
-    SCRAPE_CREDIT_COST: int = Field(default=1, ge=1)
+    PROVIDER_KEY_ENCRYPTION_SECRET: str = Field(
+        ...,
+        description=(
+            "Fernet key used to encrypt stored provider API keys. "
+            "Generate with: python -c \"from cryptography.fernet import Fernet; "
+            "print(Fernet.generate_key().decode())\""
+        ),
+    )
     
     # -------------------------------------------------------------------------
     # Scraping Settings
@@ -101,7 +105,11 @@ class Settings(BaseSettings):
     SCRAPE_TIMEOUT: int = Field(default=30, ge=5, le=300)
     LLM_TIMEOUT: int = Field(default=120, ge=10, le=600)
     READINESS_TIMEOUT_SECONDS: float = Field(default=2.0, ge=0.5, le=10.0)
-    MAX_CONCURRENT_JOBS: int = Field(default=5, ge=1, le=50)
+    MAX_CONCURRENT_JOBS_PER_USER: int = Field(default=3, ge=1, le=50)
+    MAX_PAGES_PER_JOB: int = Field(default=500, ge=1, le=100000)
+    CRAWL_CONCURRENCY: int = Field(default=3, ge=1, le=50)
+    MIN_CRAWL_DELAY_MS: int = Field(default=500, ge=0, le=60000)
+    JOB_QUEUE_DEPTH: int = Field(default=10, ge=1, le=1000)
     USER_AGENT: str = "ScrapGPT/1.0"
 
     # -------------------------------------------------------------------------
@@ -163,6 +171,20 @@ class Settings(BaseSettings):
                 UserWarning,
                 stacklevel=2
             )
+        return v
+
+    @field_validator("PROVIDER_KEY_ENCRYPTION_SECRET")
+    @classmethod
+    def validate_provider_key_encryption_secret(cls, v: str) -> str:
+        """Validate provider key encryption secret at startup."""
+        try:
+            Fernet(v.encode("utf-8"))
+        except Exception as exc:
+            raise ValueError(
+                "PROVIDER_KEY_ENCRYPTION_SECRET is missing or invalid. "
+                "Generate one: python -c \"from cryptography.fernet import Fernet; "
+                "print(Fernet.generate_key().decode())\""
+            ) from exc
         return v
 
 

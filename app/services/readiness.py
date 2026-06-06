@@ -64,7 +64,7 @@ async def _run_probe(db: AsyncSession) -> None:
     await db.execute(
         text(
             """
-            SELECT id, email, hashed_password, is_active, credits_remaining
+            SELECT id, email, hashed_password, is_active, default_provider_id
             FROM users
             LIMIT 0
             """
@@ -82,8 +82,8 @@ async def _run_probe(db: AsyncSession) -> None:
     await db.execute(
         text(
             """
-            SELECT key, value, updated_at
-            FROM system_state
+            SELECT id, user_id, provider, model, api_key_encrypted, capability_flags
+            FROM provider_configs
             LIMIT 0
             """
         )
@@ -124,4 +124,3 @@ async def check_db_ready(db: AsyncSession, timeout_seconds: float) -> DBReadines
         return _failure("query_failed", exc)
     except Exception as exc:  # Defensive fallback: preserve sanitized output.
         return _failure("query_failed", exc)
-

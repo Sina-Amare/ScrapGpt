@@ -82,21 +82,13 @@ async def start_scrape(
     result = await admit_scrape_task(user, url_str, db)
 
     if isinstance(result, AdmissionError):
-        if result.error_type == AdmissionErrorType.ALREADY_HAS_ACTIVE_TASK:
+        if result.error_type == AdmissionErrorType.TOO_MANY_ACTIVE_TASKS:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
                     "message": result.message,
                     "error_type": result.error_type.value,
                     "active_task_id": result.active_task_id,
-                },
-            )
-        if result.error_type == AdmissionErrorType.INSUFFICIENT_CREDITS:
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail={
-                    "message": result.message,
-                    "error_type": result.error_type.value,
                 },
             )
         raise HTTPException(
@@ -133,10 +125,13 @@ async def get_current_task(
 ) -> TaskResponse:
     """Get user's current active task."""
     result = await db.execute(
-        select(ScrapeTask).where(
+        select(ScrapeTask)
+        .where(
             ScrapeTask.user_id == user.id,
             ScrapeTask.state.notin_(TERMINAL_STATES),
         )
+        .order_by(ScrapeTask.created_at.desc())
+        .limit(1)
     )
     task = result.scalar_one_or_none()
 

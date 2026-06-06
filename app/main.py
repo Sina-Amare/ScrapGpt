@@ -90,8 +90,8 @@ def create_app() -> FastAPI:
         title=settings.APP_NAME,
         description=(
             "A professional web scraping API with AI capabilities. "
-            "Features include JWT authentication, async job processing, "
-            "and credit-based rate limiting."
+            "Features include JWT authentication, BYOK provider management, "
+            "and async job processing."
         ),
         version="0.1.0",
         docs_url="/docs" if settings.DEBUG else None,

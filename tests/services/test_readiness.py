@@ -20,9 +20,11 @@ class FakeSession:
     def __init__(self, effects=None):
         self.effects = list(effects or [])
         self.calls = 0
+        self.statements = []
 
-    async def execute(self, _statement):
+    async def execute(self, statement):
         self.calls += 1
+        self.statements.append(str(statement))
         if self.effects:
             effect = self.effects.pop(0)
             if isinstance(effect, Exception):
@@ -40,6 +42,8 @@ async def test_check_db_ready_healthy_returns_ok():
     assert result.ready is True
     assert result.code == "ok"
     assert session.calls == 5
+    assert any("provider_configs" in statement for statement in session.statements)
+    assert not any("system_state" in statement for statement in session.statements)
 
 
 @pytest.mark.asyncio
@@ -117,4 +121,3 @@ async def test_check_db_ready_sanitizes_exception_details():
     assert result.code == "query_failed"
     assert secret not in str(result)
     assert secret not in repr(result)
-

@@ -35,7 +35,7 @@ async def execute_scrape_pipeline(task_id: int, user_id: int) -> None:
 
     Args:
         task_id: ID of task to process
-        user_id: ID of task owner (for credit deduction)
+        user_id: ID of task owner
     """
     logger.info(
         "pipeline.started",
@@ -73,10 +73,9 @@ async def execute_scrape_pipeline(task_id: int, user_id: int) -> None:
             await transition_to_failed(task_id, result.error)
             return
 
-        # Phase 4: Transition to LLM_PROCESSING (with credit deduction)
+        # Phase 4: Transition to LLM_PROCESSING
         result = await transition_to_llm_processing(task_id, user_id)
         if not result.success:
-            # Already marked FAILED in transition if no credits
             return
 
         # Phase 5: LLM Processing

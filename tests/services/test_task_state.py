@@ -102,3 +102,16 @@ async def test_transition_to_llm_processing_ownership_mismatch_does_not_mutate_t
     assert task.error is None
     assert session.executions == 0
     assert session.flushes == 0
+
+
+@pytest.mark.asyncio
+async def test_transition_to_llm_processing_does_not_deduct_credits(monkeypatch):
+    task = _task(TaskState.SCRAPED, user_id=1)
+    session = FakeSession(task)
+    monkeypatch.setattr(task_state, "async_session_factory", lambda: session)
+
+    result = await task_state.transition_to_llm_processing(task_id=task.id, user_id=1)
+
+    assert result.success is True
+    assert task.state == TaskState.LLM_PROCESSING
+    assert session.executions == 0

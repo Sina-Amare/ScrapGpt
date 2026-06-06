@@ -8,17 +8,12 @@ import logging
 from dataclasses import dataclass
 from collections.abc import Collection
 
-from sqlalchemy import text, select
-
 from app.db.database import async_session_factory
-from app.core.config import settings
 from app.models.scrape_task import (
     ScrapeTask,
     TaskState,
-    VALID_TRANSITIONS,
     TERMINAL_STATES,
 )
-from app.models.user import User
 
 
 logger = logging.getLogger(__name__)
@@ -29,16 +24,11 @@ class InvalidTransitionError(Exception):
     pass
 
 
-class InsufficientCreditsError(Exception):
-    """Raised when user has no credits for LLM processing."""
-    pass
-
-
 @dataclass
 class TransitionResult:
     """Result of a state transition."""
     success: bool
-    task: ScrapeTask
+    task: ScrapeTask | None
     error: str | None = None
 
 
@@ -104,16 +94,13 @@ async def transition_to_llm_processing(
     user_id: int,
 ) -> TransitionResult:
     """
-    Atomically transition to LLM_PROCESSING and deduct credit.
-
-    This is the ONLY place credits are deducted.
-    ATOMIC: Credit deduction AND state change happen in ONE transaction.
+    Transition to LLM_PROCESSING after validating state and ownership.
 
     Validates task ownership before processing.
     SAFE: Will not corrupt tasks already in terminal states.
 
     Returns:
-        success=True: Credit deducted, state=LLM_PROCESSING
+        success=True: state=LLM_PROCESSING
         success=False: Validation error or already terminal
     """
     async with async_session_factory() as db:
@@ -165,41 +152,11 @@ async def transition_to_llm_processing(
                     error=f"Cannot transition from {original_state} to LLM_PROCESSING",
                 )
 
-            # Atomic credit deduction
-            result = await db.execute(
-                text("""
-                    UPDATE users
-                    SET credits_remaining = credits_remaining - :cost,
-                        updated_at = NOW()
-                    WHERE id = :user_id AND credits_remaining >= :cost
-                """),
-                {"user_id": user_id, "cost": settings.SCRAPE_CREDIT_COST},
-            )
-
-            if result.rowcount == 0:
-                # Insufficient credits - mark as FAILED (same transaction)
-                task.state = TaskState.FAILED
-                task.error = "Insufficient credits for LLM processing"
-                logger.warning(
-                    "task.failed.no_credits",
-                    extra={"task_id": task_id, "user_id": user_id},
-                )
-                # Transaction commits on exit - FAILED state persisted atomically
-                await db.flush()
-                await db.refresh(task)
-                return TransitionResult(
-                    success=False,
-                    task=task,
-                    error="Insufficient credits",
-                )
-
-            # Credit deducted successfully - update state (same transaction)
             task.state = TaskState.LLM_PROCESSING
             logger.info(
                 "task.llm_processing",
-                extra={"task_id": task_id, "credit_deducted": True},
+                extra={"task_id": task_id},
             )
-            # Transaction commits on exit - both credit deduction and state persisted atomically
 
         await db.refresh(task)
     return TransitionResult(success=True, task=task)

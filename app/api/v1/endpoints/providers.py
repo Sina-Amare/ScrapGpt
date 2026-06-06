@@ -1,0 +1,138 @@
+"""Provider configuration endpoints."""
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_current_user, get_db
+from app.models.user import User
+from app.schemas.provider import (
+    ProviderConfigCreate,
+    ProviderConfigResponse,
+    ProviderConfigUpdate,
+    ProviderTestResponse,
+)
+from app.services import provider_service
+
+
+router = APIRouter(prefix="/providers", tags=["Providers"])
+
+
+async def _raise_provider_conflict(db: AsyncSession) -> None:
+    await db.rollback()
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Provider configuration conflict",
+    )
+
+
+async def _get_owned_provider_or_404(
+    provider_id: int,
+    user: User,
+    db: AsyncSession,
+):
+    provider_config = await provider_service.get_provider_config(
+        db,
+        user_id=user.id,
+        provider_config_id=provider_id,
+    )
+    if provider_config is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Provider config not found",
+        )
+    return provider_config
+
+
+@router.get(
+    "",
+    response_model=list[ProviderConfigResponse],
+    summary="List provider configs",
+)
+async def list_providers(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[ProviderConfigResponse]:
+    """List the authenticated user's provider configs."""
+    providers = await provider_service.list_provider_configs(db, user.id)
+    return [ProviderConfigResponse.model_validate(provider) for provider in providers]
+
+
+@router.post(
+    "",
+    response_model=ProviderConfigResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create provider config",
+)
+async def create_provider(
+    payload: ProviderConfigCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProviderConfigResponse:
+    """Create a provider config. API key is encrypted and never returned."""
+    try:
+        provider_config = await provider_service.create_provider_config(db, user.id, payload)
+    except IntegrityError:
+        await _raise_provider_conflict(db)
+    return ProviderConfigResponse.model_validate(provider_config)
+
+
+@router.patch(
+    "/{provider_id}",
+    response_model=ProviderConfigResponse,
+    summary="Update provider config",
+)
+async def update_provider(
+    provider_id: int,
+    payload: ProviderConfigUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProviderConfigResponse:
+    """Update a provider config. API key is write-only when supplied."""
+    provider_config = await _get_owned_provider_or_404(provider_id, user, db)
+    try:
+        provider_config = await provider_service.update_provider_config(
+            db,
+            user_id=user.id,
+            provider_config=provider_config,
+            payload=payload,
+        )
+    except IntegrityError:
+        await _raise_provider_conflict(db)
+    return ProviderConfigResponse.model_validate(provider_config)
+
+
+@router.delete(
+    "/{provider_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete provider config",
+)
+async def delete_provider(
+    provider_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete a provider config scoped to the authenticated user."""
+    provider_config = await _get_owned_provider_or_404(provider_id, user, db)
+    await provider_service.delete_provider_config(db, user.id, provider_config)
+
+
+@router.post(
+    "/{provider_id}/test",
+    response_model=ProviderTestResponse,
+    summary="Test provider config",
+)
+async def test_provider(
+    provider_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProviderTestResponse:
+    """Test provider connectivity and structured JSON capability."""
+    provider_config = await _get_owned_provider_or_404(provider_id, user, db)
+    ok, flags, error = await provider_service.test_provider_config(db, provider_config)
+    return ProviderTestResponse(
+        ok=ok,
+        provider_config_id=provider_config.id,
+        capability_flags=flags,
+        error=error,
+    )

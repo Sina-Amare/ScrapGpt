@@ -1,8 +1,8 @@
 """
 ScrapeTask model for tracking scraping job states.
 
-Each user can have at most one non-terminal task at a time,
-enforced by a partial unique index at the database level.
+Concurrent tasks are controlled by the admission service using operator
+resource settings.
 """
 
 import enum
@@ -52,8 +52,7 @@ class ScrapeTask(Base):
     """
     Scrape task tracking model.
 
-    Invariant: At most one non-terminal task per user.
-    Enforced by partial unique index: WHERE state NOT IN ('COMPLETED', 'FAILED')
+    Active task limits are enforced by the admission service.
     """
 
     __tablename__ = "scrape_tasks"

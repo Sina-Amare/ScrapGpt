@@ -1,57 +1,22 @@
-"""
-User model for authentication and credit management.
+"""User model for authentication and account ownership."""
 
-This module defines the User model with:
-- Authentication fields (email, password hash)
-- Daily credit system with lazy reset
-- Account status tracking
-
-Usage:
-    from app.models.user import User
-    
-    user = User(
-        email="user@example.com",
-        hashed_password=hash_password("secret"),
-    )
-"""
-
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Integer, String, func
+from sqlalchemy import Boolean, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
-    pass  # Future: from app.models.job import Job
+    from app.models.provider_config import ProviderConfig
 
 
 class User(TimestampMixin, Base):
     """
     User model for the ScrapGPT platform.
 
-    Handles authentication and daily credit management.
-    Credits reset at 00:00 UTC daily via scheduled job.
-
-    Attributes:
-        id: Primary key
-        email: Unique login identifier
-        hashed_password: bcrypt password hash
-        is_active: Whether the account can be used
-        is_verified: Whether email has been verified
-        credits_remaining: Current available credits
-        daily_credit_limit: Max credits per day (allows per-user limits)
-        credits_reset_at: When credits were last reset (UTC)
-
-    Example:
-        >>> user = User(email="test@example.com", hashed_password="...")
-        >>> user.credits_remaining
-        5
-        >>> user.use_credit()
-        True
-        >>> user.credits_remaining
-        4
+    Handles authentication, account status, scrape task ownership, and provider
+    configuration ownership.
     """
     
     __tablename__ = "users"
@@ -102,31 +67,11 @@ class User(TimestampMixin, Base):
         comment="Whether email has been verified",
     )
     
-    # -------------------------------------------------------------------------
-    # Credit System
-    # -------------------------------------------------------------------------
-    credits_remaining: Mapped[int] = mapped_column(
+    default_provider_id: Mapped[int | None] = mapped_column(
         Integer,
-        default=5,
-        server_default="5",
-        nullable=False,
-        comment="Current available daily credits",
-    )
-    
-    daily_credit_limit: Mapped[int] = mapped_column(
-        Integer,
-        default=5,
-        server_default="5",
-        nullable=False,
-        comment="Maximum credits per day (can be increased for premium)",
-    )
-    
-    credits_reset_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        server_default=func.now(),
-        nullable=False,
-        comment="When credits were last reset (UTC)",
+        ForeignKey("provider_configs.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Default provider config for AI calls",
     )
     
     # -------------------------------------------------------------------------
@@ -137,6 +82,19 @@ class User(TimestampMixin, Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+
+    provider_configs: Mapped[list["ProviderConfig"]] = relationship(
+        "ProviderConfig",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        foreign_keys="ProviderConfig.user_id",
+    )
+
+    default_provider: Mapped["ProviderConfig | None"] = relationship(
+        "ProviderConfig",
+        foreign_keys=[default_provider_id],
+        post_update=True,
+    )
     
     # -------------------------------------------------------------------------
     # Methods
@@ -145,70 +103,4 @@ class User(TimestampMixin, Base):
     def __repr__(self) -> str:
         """String representation for debugging."""
         return f"<User {self.email}>"
-
-    def ensure_credits_reset(self) -> bool:
-        """
-        DEPRECATED: Credits now reset at 00:00 UTC via scheduler.
-
-        This method is kept for backwards compatibility but should not be used.
-        It always returns False since lazy reset is no longer the policy.
-        """
-        import warnings
-        warnings.warn(
-            "ensure_credits_reset is deprecated. "
-            "Credits reset at 00:00 UTC via scheduler.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return False
-
-    def use_credit(self, amount: int = 1) -> bool:
-        """
-        Consume credits for a scraping operation.
-
-        NOTE: This method does NOT trigger lazy reset anymore.
-        Credits reset at 00:00 UTC daily via scheduler.
-
-        Args:
-            amount: Number of credits to consume (default: 1)
-
-        Returns:
-            bool: True if credits were available and consumed, False otherwise
-        """
-        if self.credits_remaining >= amount:
-            self.credits_remaining -= amount
-            return True
-        return False
-
-    @property
-    def has_credits(self) -> bool:
-        """
-        Check if user has any remaining credits.
-
-        NOTE: Does NOT trigger lazy reset - credits reset at 00:00 UTC.
-
-        Returns:
-            bool: True if credits are available
-        """
-        return self.credits_remaining > 0
-
-    @property
-    def seconds_until_reset(self) -> float:
-        """
-        Calculate seconds remaining until next credit reset.
-
-        Credits reset at 00:00 UTC daily.
-
-        Returns:
-            float: Seconds until next 00:00 UTC
-        """
-        from datetime import datetime, timezone
-
-        now = datetime.now(timezone.utc)
-        # Calculate seconds until next midnight UTC
-        seconds_today = (
-            now.hour * 3600 + now.minute * 60 + now.second
-        )
-        seconds_in_day = 86400
-        return seconds_in_day - seconds_today
 

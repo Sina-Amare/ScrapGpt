@@ -50,8 +50,7 @@ class UserResponse(BaseModel):
     email: str
     is_active: bool
     is_verified: bool
-    credits_remaining: int
-    daily_credit_limit: int
+    default_provider_id: int | None = None
 
     model_config = {"from_attributes": True}
 

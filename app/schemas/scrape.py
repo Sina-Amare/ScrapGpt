@@ -20,7 +20,6 @@ class ScrapeResponse(BaseModel):
     url: str = Field(..., description="URL that was scraped")
     title: str | None = Field(default=None, description="Page title")
     content: str | None = Field(default=None, description="Extracted content")
-    credits_remaining: int = Field(..., description="User's remaining credits")
     message: str | None = Field(default=None, description="Status message")
 
 
@@ -29,4 +28,3 @@ class ScrapeError(BaseModel):
     success: bool = Field(default=False)
     url: str
     error: str
-    credits_remaining: int

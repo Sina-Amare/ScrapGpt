@@ -61,6 +61,9 @@ python-multipart~=0.0.20
 # - [cryptography] backend for JWT token handling
 python-jose[cryptography]~=3.3.0
 
+# Cryptography: Fernet encryption for user-owned provider API keys
+cryptography>=42.0.0
+
 # Passlib: Password hashing library
 # - [bcrypt] for secure password hashing
 passlib[bcrypt]~=1.7.4
@@ -75,7 +78,6 @@ bcrypt~=4.2.0
 # Requests: Simple HTTP library for Python
 # - Synchronous HTTP client for simple scraping tasks
 requests~=2.32.0
-httpx~=0.28.0
 # BeautifulSoup4: HTML/XML parsing library
 # - Extract data from HTML documents
 beautifulsoup4~=4.12.0
@@ -92,7 +94,7 @@ httpx~=0.28.0
 # Background Jobs
 # -----------------------------------------------------------------------------
 # APScheduler: Advanced Python Scheduler
-# - Used for scheduled credit reset and watchdog cleanup
+# - Used for watchdog cleanup
 apscheduler~=3.10.0
 
 # -----------------------------------------------------------------------------
@@ -101,6 +103,9 @@ apscheduler~=3.10.0
 # SlowAPI: Rate limiting for FastAPI
 # - Production-ready, based on flask-limiter
 slowapi~=0.1.9
+
+# LiteLLM: unified provider abstraction for BYOK AI calls
+litellm>=1.0.0
 
 # -----------------------------------------------------------------------------
 # Development & Testing
