@@ -6,7 +6,7 @@ An async FastAPI and React application for authenticated, BYOK URL scraping with
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)](https://fastapi.tiangolo.com)
 [![Status](https://img.shields.io/badge/status-MVP%20%2F%20WIP-orange.svg)](docs/STATUS.md)
 
-> **Status:** MVP architecture is in place and end-to-end runnable. Several known wiring bugs and unfinished pieces remain — see [docs/STATUS.md](docs/STATUS.md) for the current punch list and where to continue from.
+> **Status:** Phase 0 and Phase 0.5 complete. Backend + React frontend are end-to-end runnable with BYOK provider management, real LLM integration, and a full task pipeline. Phase 1 (intelligent site analysis) is next — see `docs/product/strategic_redesign.md` for the roadmap.
 
 ## What it does
 
@@ -31,7 +31,7 @@ Users configure their own AI provider keys. Keys are encrypted at rest; normal p
 | Scraping        | httpx + BeautifulSoup4 + lxml                       |
 | Background jobs | APScheduler (in-process)                            |
 | Rate limiting   | SlowAPI                                             |
-| Tests           | pytest + pytest-asyncio (skeleton only — see STATUS) |
+| Tests           | pytest + pytest-asyncio (95 backend) / tsx (16 frontend) |
 
 PostgreSQL 14+ is required (uses JSONB and partial unique indexes).
 
@@ -103,10 +103,11 @@ All routes are under `/api/v1`.
 
 | Method | Path                       | Auth | Description                                          |
 | ------ | -------------------------- | ---- | ---------------------------------------------------- |
-| POST   | `/scrape/start`            | yes  | Admit + queue a scrape task (returns 202)            |
-| GET    | `/scrape/tasks`            | yes  | List user's tasks, newest first                      |
-| GET    | `/scrape/tasks/{task_id}`  | yes  | Get task status (owner-only, 404 otherwise)          |
+| POST   | `/scrape/start`            | yes  | Admit + queue a scrape task (returns 202)              |
+| GET    | `/scrape/tasks`            | yes  | List user's tasks, newest first (skip/limit supported) |
+| GET    | `/scrape/tasks/{task_id}`  | yes  | Get full task detail incl. content_length (owner-only) |
 | GET    | `/scrape/tasks/current`    | yes  | Get the user's current non-terminal task (404 if none) |
+| DELETE | `/scrape/tasks/{task_id}`  | yes  | Delete a terminal task (400 if active, 404 if not owned) |
 
 ## Project structure
 
@@ -148,16 +149,16 @@ scrapegpt/
 │       └── watchdog.py            # fails tasks stuck past timeout
 ├── alembic/versions/
 │   ├── 001_create_users.py
-│   ├── 002_create_scrape_tasks.py # ⚠️ legacy enum values; see STATUS
-│   ├── 003_update_task_states.py  # current enum + partial unique idx
-│   └── 005_provider_foundation.py # credit removal + BYOK providers
+│   ├── 002_create_scrape_tasks.py
+│   ├── 003_update_task_states.py          # enum values + (now-dropped) partial unique idx
+│   ├── 004_system_state.py                # legacy credit-reset table (dropped in 005)
+│   ├── fe292fc905ad_remove_old_enum_values.py  # enum rename fix
+│   └── 005_provider_foundation.py         # credit removal + BYOK provider_configs table
 ├── docs/
-│   ├── architecture.md            # System design overview
-│   ├── STATUS.md                  # Where to continue from (punch list)
-│   ├── implementation_audit.md    # 2026-02-16 full audit (source of STATUS)
-│   ├── ops/health.md              # Health/readiness operations notes
-│   ├── learning/                  # Decision logs (01–04)
-│   └── reviews/                   # Self-review notes per feature
+│   ├── product/strategic_redesign.md  # Authoritative roadmap + architecture decisions
+│   ├── ops/health.md                  # Health/readiness operations notes
+│   ├── archive/project_master.md      # Pre-redesign reference
+│   └── learning/                      # Decision logs 01–09 (one per feature)
 ├── frontend/                      # React control surface
 ├── tests/                         # backend pytest suite
 ├── requirements.txt
@@ -225,9 +226,7 @@ gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker
 
 ## Where to go next
 
-Read [docs/STATUS.md](docs/STATUS.md) — it's the source of truth for what's done, what's broken, and what to pick up next, organized by priority.
-
-For a deeper architectural walkthrough, see [docs/architecture.md](docs/architecture.md).
+Read [docs/product/strategic_redesign.md](docs/product/strategic_redesign.md) — the authoritative roadmap covering the current architecture, completed phases, and what Phase 1 builds next (intelligent site analysis, URL validation, robots.txt, fetcher, AI-driven field discovery).
 
 ## License
 
