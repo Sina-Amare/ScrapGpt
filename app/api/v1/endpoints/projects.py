@@ -237,7 +237,6 @@ async def list_projects(
                 error_code=project.error_code,
             )
         )
-    await db.commit()
     return items
 
 

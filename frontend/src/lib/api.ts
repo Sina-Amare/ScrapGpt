@@ -360,5 +360,21 @@ export const api = {
 
   deleteProject(id: number): Promise<void> {
     return apiRequest<void>(`/projects/${id}`, { method: "DELETE" });
+  },
+
+  async exportProject(id: number, format: "csv" | "json" = "csv"): Promise<void> {
+    const headers: Record<string, string> = { Accept: format === "json" ? "application/json" : "text/csv" };
+    if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
+    const response = await fetch(`${apiBaseUrl}/projects/${id}/export?format=${format}`, { headers });
+    if (!response.ok) throw new ApiError(response.status, await response.text());
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `project-${id}.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 };

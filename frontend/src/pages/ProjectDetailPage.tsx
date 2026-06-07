@@ -369,12 +369,10 @@ export function ProjectDetailPage() {
                 <p className="text-sm text-muted">Extracted records from this project.</p>
               </div>
               {records.length ? (
-                <a href={`/api/v1/projects/${project.id}/export?format=csv`}>
-                  <Button variant="secondary">
-                    <Download className="h-4 w-4" />
-                    CSV
-                  </Button>
-                </a>
+                <Button variant="secondary" onClick={() => void api.exportProject(project.id, "csv")}>
+                  <Download className="h-4 w-4" />
+                  CSV
+                </Button>
               ) : null}
             </div>
             <RecordsTable rows={records.map((record) => record.normalized_data ?? record.raw_data)} />

@@ -235,14 +235,29 @@ class Project(Base):
 
     @property
     def is_terminal(self) -> bool:
-        return self.state in TERMINAL_JOB_STATES
+        return self.state in TERMINAL_PROJECT_STATES
 
     @property
     def is_active(self) -> bool:
-        return self.state in ACTIVE_JOB_STATES
+        return self.state in ACTIVE_PROJECT_STATES
 
     def can_transition_to(self, new_state: ProjectState) -> bool:
         return new_state in VALID_PROJECT_TRANSITIONS.get(self.state, [])
+
+    def transition_to(self, new_state: ProjectState) -> None:
+        """Validate and apply a state transition.
+
+        Raises ValueError if the transition is not allowed by
+        VALID_PROJECT_TRANSITIONS.  This keeps the state-machine
+        invariant enforced at the model layer rather than relying
+        on each caller to check manually.
+        """
+        if not self.can_transition_to(new_state):
+            raise ValueError(
+                f"Illegal transition: {self.state.value} → {new_state.value} "
+                f"(project {self.id})"
+            )
+        self.state = new_state
 
     def __repr__(self) -> str:
         return f"<Project {self.id} state={self.state.value}>"

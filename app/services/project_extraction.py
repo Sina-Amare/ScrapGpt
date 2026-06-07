@@ -43,7 +43,7 @@ async def run_seed_extraction(
     spec: ExtractionSpec,
     preview: PreviewResult | None,
 ) -> dict[str, Any]:
-    project.state = ProjectState.DISCOVERING
+    project.transition_to(ProjectState.DISCOVERING)
     await db.flush()
 
     await db.execute(delete(ExtractedRecord).where(ExtractedRecord.project_id == project.id))
@@ -60,7 +60,7 @@ async def run_seed_extraction(
     db.add(page)
     await db.flush()
 
-    project.state = ProjectState.EXTRACTING
+    project.transition_to(ProjectState.EXTRACTING)
     payload = (
         {
             "sample_records": preview.sample_records,
@@ -86,7 +86,7 @@ async def run_seed_extraction(
         )
     page.state = CrawlPageState.EXTRACTED
 
-    project.state = ProjectState.EXPORTING
+    project.transition_to(ProjectState.EXPORTING)
     export = Export(
         project_id=project.id,
         format=spec.export_format or "csv",
@@ -94,7 +94,7 @@ async def run_seed_extraction(
         spec_hash=_spec_hash(spec),
     )
     db.add(export)
-    project.state = ProjectState.COMPLETED
+    project.transition_to(ProjectState.COMPLETED)
     await db.flush()
 
     return {

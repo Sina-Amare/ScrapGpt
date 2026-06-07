@@ -84,7 +84,7 @@ async def create_preview(
     project: Project,
     spec: ExtractionSpec,
 ) -> PreviewResult:
-    project.state = ProjectState.PREVIEWING
+    project.transition_to(ProjectState.PREVIEWING)
     await db.flush()
 
     payload = build_preview_payload(project, spec)
@@ -97,7 +97,7 @@ async def create_preview(
         quality_summary=payload["quality_summary"],
     )
     db.add(preview)
-    project.state = ProjectState.PREVIEW_READY
+    project.transition_to(ProjectState.PREVIEW_READY)
     await db.flush()
     await db.refresh(preview)
     return preview
