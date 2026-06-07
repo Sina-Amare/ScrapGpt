@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { AppShell } from "./layout/AppShell";
 import { ProtectedRoute, PublicRoute } from "./layout/RouteGuards";
 import { AuthProvider, useAuth } from "./lib/auth";
@@ -44,8 +44,7 @@ function ProtectedShell() {
 }
 
 function LegacyJobRedirect() {
-  const path = window.location.pathname;
-  const id = path.split("/").filter(Boolean).at(-1);
+  const { id } = useParams<{ id: string }>();
   return <Navigate to={id ? `/projects/${id}` : "/projects"} replace />;
 }
 

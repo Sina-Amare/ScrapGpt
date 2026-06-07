@@ -200,9 +200,24 @@ async def list_projects(
         .offset(skip)
     )
     projects = result.scalars().all()
+
+    # Batch-load the latest spec for each project in a single query.
+    # The list view only needs selected_field_count, so we never auto-create
+    # a spec here — that happens lazily when the user opens the workspace.
+    specs_by_project: dict[int, ExtractionSpec | None] = {p.id: None for p in projects}
+    if projects:
+        spec_rows = await db.execute(
+            select(ExtractionSpec)
+            .where(ExtractionSpec.project_id.in_([p.id for p in projects]))
+            .order_by(ExtractionSpec.created_at.desc(), ExtractionSpec.id.desc())
+        )
+        for spec in spec_rows.scalars().all():
+            if specs_by_project.get(spec.project_id) is None:
+                specs_by_project[spec.project_id] = spec
+
     items: list[ProjectListItem] = []
     for project in projects:
-        spec = await ensure_default_spec(db, project)
+        spec = specs_by_project.get(project.id)
         status_info = product_status_for(project)
         items.append(
             ProjectListItem(
