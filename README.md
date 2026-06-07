@@ -158,7 +158,7 @@ scrapegpt/
 │   ├── product/strategic_redesign.md  # Authoritative roadmap + architecture decisions
 │   ├── ops/health.md                  # Health/readiness operations notes
 │   ├── archive/project_master.md      # Pre-redesign reference
-│   └── learning/                      # Decision logs 01–09 (one per feature)
+│   └── learning/                      # Decision logs 01–05 (one per feature)
 ├── frontend/                      # React control surface
 ├── tests/                         # backend pytest suite
 ├── requirements.txt
