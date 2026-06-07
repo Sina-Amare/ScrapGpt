@@ -19,6 +19,7 @@ Last verified: June 7, 2026.
   - React/Vite app with auth, protected routes, provider management, health, legacy scrape, dashboard, jobs, and new analysis screens.
   - Access tokens are in memory; refresh tokens are stored locally.
   - Provider key reveal is password-confirmed and not cached client-side.
+  - Fluid grid layout with correct boundary constraints for form fields and scrolling dialogs.
 - Phase 1 analysis jobs:
   - `jobs` and `analysis_cache` tables.
   - SSRF-safe URL validation.

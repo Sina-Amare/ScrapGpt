@@ -25,7 +25,12 @@ This polish preserves the design integrity and ensures a responsive, premium use
 - **Solution**: We replaced arbitrary configurations with standard Tailwind columns: `lg:grid-cols-3` combined with `lg:col-span-1` (left panel) and `lg:col-span-2` (right panel).
 - **Why this works**: Standard Tailwind class names compile reliably in all environments and result in a clean, balanced layout on wide displays.
 
-### 3. Sidebar Exact Matching
+### 3. Dialog Height Constraints and Overflow
+- **Problem**: Dialogs with large content (like `TaskResultPanel`) were causing the window to scroll and pushing the close buttons off-screen.
+- **Solution**: We constrained the `Dialog` with `max-h-full` and `overflow-hidden`, while allowing its inner content container to use `overflow-y-auto min-h-0`.
+- **Why this works**: This ensures the dialog itself respects viewport boundaries, allowing only the designated content area inside to scroll.
+
+### 4. Sidebar Exact Matching
 - **Problem**: Descendant routes of parent paths (like `/jobs/new` under `/jobs`) triggered active state colors for both navigation items.
 - **Solution**: Added the `end` property to React Router `NavLink` items for `/dashboard` and `/jobs` to require exact path matches.
 
@@ -86,4 +91,4 @@ In `frontend/src/lib/jobPolling.ts`, `AWAITING_SETUP` maps to `"Analysis complet
 
 ## Summary
 
-This change ensures frontend layout stability by locking down input and container widths using standard Tailwind utilities. It also keeps the Phase 1 product language honest: analysis jobs are the primary workflow, legacy scrape is secondary, and review/setup language waits until the real review feature exists.
+This change ensures frontend layout stability by locking down input and container widths using standard Tailwind utilities, and constraining dialog heights to fix overflow. It also keeps the Phase 1 product language honest: analysis jobs are the primary workflow, legacy scrape is secondary, and review/setup language waits until the real review feature exists.
