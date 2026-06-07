@@ -1,6 +1,12 @@
 # 04: Pipeline Bug Fixes — Credit Reset, Transactions, Security
 
-> **Scope:** Credit reset bypass, transaction bugs, ownership validation  
+> **PARTIAL ARCHIVE — Credit and system_state sections are stale as of Phase 0.5.**
+> The credit reset job, `system_state` table, and all credit-related admission logic were
+> removed in migration `005`. Sections 1, 2, and anything referencing `system_state` or
+> `credits_remaining` no longer reflect the code. The transaction bug fixes, ownership
+> validation, and watchdog race-condition fixes remain accurate and in production.
+
+> **Scope:** Credit reset bypass (historical), transaction bugs, ownership validation
 > **Impact:** Production-critical fixes for reliability and security
 
 ---

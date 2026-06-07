@@ -1,7 +1,19 @@
 # 02: Admission Gate & Credit Deduction Strategy
 
+> **ARCHIVED — Phase 0.5 removed the credit system entirely.**
+> Credits, `credits_remaining`, `daily_credit_limit`, `credits_reset_at`, and
+> `system_state` were dropped in migration `005`. The partial unique index was also
+> dropped. Admission now checks `MAX_CONCURRENT_JOBS_PER_USER` (configurable count,
+> default 3) with no credit gate. See `docs/learning/06_phase_0_5_provider_foundation.md`
+> for the current admission design.
+>
+> This document is kept as historical context for why the credit approach was
+> rejected in favour of a self-hosted resource-control model.
+
+---
+
 > **Files:** `app/services/admission.py`, `app/services/task_state.py`
-> **Core Decision:** Credits deducted at LLM phase, not at admission
+> **Core Decision (historical):** Credits deducted at LLM phase, not at admission
 
 ---
 

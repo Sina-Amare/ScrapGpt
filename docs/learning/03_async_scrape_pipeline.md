@@ -1,7 +1,14 @@
 # 03: Async Scrape Pipeline — Reliability & State Machine
 
+> **PARTIAL ARCHIVE — Credit references are stale as of Phase 0.5.**
+> The credit system was removed entirely (migration `005`). Any section in this document
+> that mentions credit deduction, `credits_remaining`, or the `INSUFFICIENT_CREDITS` error
+> path no longer reflects the code. The pipeline architecture (BackgroundTasks,
+> always-finalize guarantee, state machine, watchdog, session-per-transition) is still
+> accurate and worth reading.
+
 > **Files:** `app/services/task_executor.py`, `app/services/task_state.py`, `app/services/scraper.py`, `app/services/watchdog.py`  
-> **Invariants:** Always-finalize, atomic credit deduction, no zombie tasks
+> **Invariants:** Always-finalize, no zombie tasks
 
 ---
 

@@ -1,7 +1,13 @@
 # 01: ScrapeTask Schema & Invariant Enforcement
 
 > **Files:** `app/models/scrape_task.py`, `alembic/versions/`
-> **Invariant:** At most one non-terminal task per user
+> **Invariant:** At most `MAX_CONCURRENT_JOBS_PER_USER` active tasks per user (default 3)
+
+> **Partial index note:** This document originally described a PostgreSQL partial unique
+> index (`ix_one_active_task_per_user`) as the concurrency safety net. That index was
+> **dropped in migration `005`** (Phase 0.5). The invariant is now enforced purely by a
+> count-based check in `app/services/admission.py`. The state machine, enum, transitions,
+> and everything else in this document remain accurate.
 
 ---
 
