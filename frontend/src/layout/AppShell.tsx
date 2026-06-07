@@ -18,12 +18,12 @@ import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 
 const navItems = [
-  { to: "/dashboard", label: "Dashboard", icon: Activity },
-  { to: "/jobs", label: "Jobs", icon: List },
-  { to: "/jobs/new", label: "New Analysis", icon: BrainCog },
-  { to: "/providers", label: "Providers", icon: Settings2 },
-  { to: "/scrape/new", label: "Legacy Scrape", icon: Plus },
-  { to: "/health", label: "Health", icon: HeartPulse }
+  { to: "/dashboard", label: "Dashboard", icon: Activity, end: true },
+  { to: "/jobs", label: "Jobs", icon: List, end: true },
+  { to: "/jobs/new", label: "New Analysis", icon: BrainCog, end: false },
+  { to: "/providers", label: "Providers", icon: Settings2, end: false },
+  { to: "/scrape/new", label: "Legacy Scrape", icon: Plus, end: false, legacy: true },
+  { to: "/health", label: "Health", icon: HeartPulse, end: false }
 ];
 
 const isJsdom = navigator.userAgent.toLowerCase().includes("jsdom");
@@ -37,17 +37,27 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
           <NavLink
             key={item.to}
             to={item.to}
+            end={item.end}
             onClick={onNavigate}
             className={({ isActive }) =>
               `flex h-10 items-center gap-3 rounded-md px-3 text-sm font-semibold transition ${
-                isActive
+                item.legacy && isActive
+                  ? "border border-line bg-porcelain text-ink"
+                  : isActive
                   ? "bg-teal text-white"
+                  : item.legacy
+                  ? "text-muted/80 hover:bg-porcelain hover:text-ink"
                   : "text-muted hover:bg-porcelain hover:text-ink"
               }`
             }
           >
             <Icon className="h-4 w-4" />
-            {item.label}
+            <span className="min-w-0 flex-1 truncate">{item.label}</span>
+            {item.legacy ? (
+              <span className="rounded border border-line px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted">
+                old
+              </span>
+            ) : null}
           </NavLink>
         );
       })}

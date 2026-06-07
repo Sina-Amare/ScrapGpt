@@ -1,10 +1,10 @@
-# 09. Scrape Task Deletion and Results View
+# 05 — Legacy Scrape Task Deletion and Results View
 
 Documentation detailing the implementation and design decisions for adding task deletion and a detailed results viewer modal on the Dashboard page.
 
 ## Purpose & Context
 
-- **Problem:** Users could run scrape tasks and view the immediate live status, but once the task was completed or failed, they could not view detailed structured scrape results later from the **Task History** list. Additionally, there was no way to purge old, failed, or unnecessary tasks from the database directly in the UI.
+- **Problem:** Users could run legacy scrape tasks and view the immediate live status, but once the task was completed or failed, they could not view detailed structured scrape results later from the **Task History** list. Additionally, there was no way to purge old, failed, or unnecessary tasks from the database directly in the UI.
 - **Goal:**
   1. Allow users to permanently delete any completed or failed tasks from the database, preventing clutter.
   2. Implement an elegant, interactive details modal to inspect the exact scraped metadata and LLM analysis findings.
@@ -17,27 +17,27 @@ Documentation detailing the implementation and design decisions for adding task 
 - **On-Demand Detail Fetching:**
   The `GET /scrape/tasks` history list endpoint intentionally defers loading the large `content` block to keep list page loads fast. Therefore, rather than using list-level caching, clicking **View** queries the full task detail endpoint (`GET /scrape/tasks/{id}`) to load the complete results only when requested.
 - **Component Separation:**
-  Following the React component architecture, the UI dialogs (`ConfirmDeleteTaskDialog` and `TaskDetailDialog`) are split into their own files under [src/components/ui/](file:///c:/Users/sinaa/Desktop/Personal%20Projects/scrapegpt/frontend/src/components/ui/) instead of dumping them inline in `DashboardPage.tsx`. This keeps the main dashboard file clean, readable, and highly maintainable.
+  Following the React component architecture, the UI dialogs (`ConfirmDeleteTaskDialog` and `TaskDetailDialog`) are split into their own files under `frontend/src/components/ui/` instead of dumping them inline in `DashboardPage.tsx`. This keeps the main dashboard file clean, readable, and highly maintainable.
 - **Consistent UI/UX Design System:**
   The Dialogs leverage the custom `<Dialog>`, `<Button>`, and `<Badge>` design system. The delete confirmation incorporates warning-tinted text and a red variant primary button to highlight the permanent nature of the operation.
 
 ## Code Walkthrough
 
 ### 1. Backend Deletion Integration
-The backend `DELETE /scrape/tasks/{task_id}` endpoint in [scrape.py](file:///c:/Users/sinaa/Desktop/Personal%20Projects/scrapegpt/app/api/v1/endpoints/scrape.py#L236-L263) verifies:
+The backend `DELETE /scrape/tasks/{task_id}` endpoint in `app/api/v1/endpoints/scrape.py` verifies:
 - Task existence and owner ID match.
 - The task's `is_terminal` property is true.
 
 ### 2. Frontend Components
-- [ConfirmDeleteTaskDialog](file:///c:/Users/sinaa/Desktop/Personal%20Projects/scrapegpt/frontend/src/components/ui/ConfirmDeleteTaskDialog.tsx): A confirmation popup displaying the target URL and asking the user to confirm the deletion action.
-- [TaskDetailDialog](file:///c:/Users/sinaa/Desktop/Personal%20Projects/scrapegpt/frontend/src/components/ui/TaskDetailDialog.tsx): Fetches task details using React Query key `["task-detail", taskId]`. While loading, it mounts `Skeleton` placeholders. Once loaded, it displays:
+- `frontend/src/components/ui/ConfirmDeleteTaskDialog.tsx`: A confirmation popup displaying the target URL and asking the user to confirm the deletion action.
+- `frontend/src/components/ui/TaskDetailDialog.tsx`: Fetches task details using React Query key `["task-detail", taskId]`. While loading, it mounts `Skeleton` placeholders. Once loaded, it displays:
   - Clickable target URL, formatted creation timestamp, and raw scraped page character count.
   - Tone-coded status badges (`stateTone`).
   - An `<Alert tone="danger">` showing the backend error message if the task failed.
   - The structured AI summary, classification, and key points in the `<TaskResultPanel>` if the task completed successfully.
 
 ### 3. Dashboard Integration
-[DashboardPage.tsx](file:///c:/Users/sinaa/Desktop/Personal%20Projects/scrapegpt/frontend/src/pages/DashboardPage.tsx):
+`frontend/src/pages/DashboardPage.tsx`:
 - Adds a fifth column (`Actions`) to the Task History table.
 - Holds `selectedTaskId` and `deleteTaskTarget` state pointers to manage which modals are mounted.
 - Uses `@tanstack/react-query`'s `useMutation` to handle `api.deleteTask` async execution. On success, it calls `invalidateQueries` for both `["task-history"]` and `["current-task"]` keys to refresh the table.
@@ -106,4 +106,4 @@ The backend `DELETE /scrape/tasks/{task_id}` endpoint in [scrape.py](file:///c:/
 
 ## Summary
 
-The task deletion and detail results viewer feature is correctly implemented with absolute user-isolation and state checks. The detail viewer queries the deferred content column on-demand to maintain optimal list-view performance, and separate UI components enforce a clean frontend codebase.
+The legacy scrape task deletion and detail viewer feature is correctly implemented with user isolation and state checks. The detail viewer queries the deferred content column on demand to maintain list-view performance, and separate UI components keep the frontend codebase maintainable.

@@ -154,20 +154,21 @@ async def test_static_fetch_no_truncation_metadata(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_browser_mode_unavailable_raises_fetch_error():
-    import sys
-    playwright_mod = sys.modules.pop("playwright", None)
-    playwright_async = sys.modules.pop("playwright.async_api", None)
+async def test_browser_mode_unavailable_raises_fetch_error(monkeypatch):
+    import builtins
 
-    try:
-        with pytest.raises(FetchError) as exc_info:
-            await fetch_url("http://example.com/", render_mode="BROWSER")
-        assert exc_info.value.error_code == "BROWSER_UNAVAILABLE"
-    finally:
-        if playwright_mod is not None:
-            sys.modules["playwright"] = playwright_mod
-        if playwright_async is not None:
-            sys.modules["playwright.async_api"] = playwright_async
+    original_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "playwright.async_api":
+            raise ImportError("playwright intentionally unavailable in this test")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    with pytest.raises(FetchError) as exc_info:
+        await fetch_url("http://example.com/", render_mode="BROWSER")
+    assert exc_info.value.error_code == "BROWSER_UNAVAILABLE"
 
 
 @pytest.mark.asyncio
@@ -250,6 +251,9 @@ async def test_browser_fetch_blocks_private_ip_via_route(monkeypatch):
             fake_route.abort = AsyncMock()
             fake_route.continue_ = AsyncMock()
             await captured_handler[0](fake_route)
+            # Real Playwright throws when route.abort() is called — simulate that.
+            if fake_route.abort.called:
+                raise Exception("net::ERR_BLOCKED_BY_CLIENT")
         return MagicMock(status=200)
 
     fake_page.goto = mock_goto
@@ -288,3 +292,80 @@ async def test_browser_fetch_blocks_private_ip_via_route(monkeypatch):
     with pytest.raises(FE) as exc_info:
         await _browser_fetch("https://example.com")
     assert exc_info.value.error_code == "BROWSER_URL_BLOCKED"
+
+
+@pytest.mark.asyncio
+async def test_browser_fetch_blank_exception_has_actionable_message(monkeypatch):
+    """Blank Playwright exceptions must not persist as 'Browser fetch failed: '."""
+    try:
+        import playwright.async_api as pw_api
+    except ImportError:
+        pytest.skip("playwright not installed")
+
+    from unittest.mock import AsyncMock, MagicMock
+
+    fake_page = MagicMock()
+    fake_page.goto = AsyncMock(side_effect=Exception())
+
+    fake_context = MagicMock()
+    fake_context.route = AsyncMock()
+    fake_context.new_page = AsyncMock(return_value=fake_page)
+    fake_context.close = AsyncMock()
+
+    fake_browser = MagicMock()
+    fake_browser.new_context = AsyncMock(return_value=fake_context)
+    fake_browser.close = AsyncMock()
+
+    fake_chromium = MagicMock()
+    fake_chromium.launch = AsyncMock(return_value=fake_browser)
+
+    fake_pw = MagicMock()
+    fake_pw.chromium = fake_chromium
+    fake_pw.__aenter__ = AsyncMock(return_value=fake_pw)
+    fake_pw.__aexit__ = AsyncMock(return_value=None)
+
+    monkeypatch.setattr(pw_api, "async_playwright", lambda: fake_pw)
+    monkeypatch.setattr(
+        "app.services.fetcher.settings",
+        type("S", (), {
+            "SCRAPE_TIMEOUT": 30,
+            "USER_AGENT": "Test/1.0",
+            "MAX_FETCH_BYTES": 2 * 1024 * 1024,
+            "ALLOW_PRIVATE_NETWORK_URLS": True,
+        })(),
+    )
+
+    from app.services.fetcher import FetchError as FE, _browser_fetch
+
+    with pytest.raises(FE) as exc_info:
+        await _browser_fetch("https://example.com")
+
+    assert exc_info.value.error_code == "FETCH_FAILED"
+    assert str(exc_info.value) == "Browser fetch failed: Exception"
+
+
+@pytest.mark.asyncio
+async def test_browser_fetch_uses_threaded_path_when_required(monkeypatch):
+    expected = FetchResult(
+        html="<html></html>",
+        content_hash="0" * 64,
+        final_url="https://example.com/",
+        render_mode_used=RenderModeUsed.BROWSER,
+        status_code=200,
+        elapsed_ms=1,
+        fetch_metadata={"threaded": True},
+    )
+
+    monkeypatch.setattr(
+        "app.services.fetcher._should_use_threaded_browser_fetch",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "app.services.fetcher._browser_fetch_sync",
+        lambda url: expected,
+    )
+
+    from app.services.fetcher import _browser_fetch
+
+    result = await _browser_fetch("https://example.com/")
+    assert result is expected

@@ -161,9 +161,9 @@ export function NewScrapePage() {
     <>
       <PageHeader title="New Scrape" eyebrow="Extraction pipeline" />
 
-      <div className="grid gap-6 lg:grid-cols-[380px_1fr]">
+      <div className="grid gap-6 lg:grid-cols-3">
         {/* Left: URL form */}
-        <section className="rounded-xl border border-line bg-surface p-6 shadow-panel">
+        <section className="min-w-0 w-full overflow-hidden rounded-xl border border-line bg-surface p-6 shadow-panel lg:col-span-1">
           <div className="mb-5 flex items-center gap-3">
             <div className="grid h-10 w-10 place-items-center rounded-xl bg-teal-soft text-teal">
               <Globe2 className="h-5 w-5" />
@@ -174,7 +174,7 @@ export function NewScrapePage() {
             </div>
           </div>
 
-          <form className="grid gap-4" onSubmit={onSubmit}>
+          <form className="grid gap-4 min-w-0 w-full" onSubmit={onSubmit}>
             {submitError ? <Alert tone="danger">{submitError}</Alert> : null}
             <Field label="URL">
               <Input
@@ -204,7 +204,7 @@ export function NewScrapePage() {
         </section>
 
         {/* Right: Live task status */}
-        <section className="rounded-xl border border-line bg-surface p-6 shadow-panel">
+        <section className="min-w-0 rounded-xl border border-line bg-surface p-6 shadow-panel lg:col-span-2">
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
               <h2 className="font-bold text-ink">Task status</h2>

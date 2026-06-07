@@ -1,4 +1,4 @@
-# 05: Phase 0 Security Fixes — Rate Limiting & Auth Hardening
+# 01 — Phase 0 Security Fixes: Rate Limiting & Auth Hardening
 
 > **Files:** `app/core/rate_limit.py`, `app/api/v1/endpoints/auth.py`, `tests/core/test_rate_limit.py`
 > **Phase:** 0 (pre-feature stabilization)

@@ -1,4 +1,4 @@
-# 06 — Phase 0.5: Provider Foundation & Credit Removal
+# 02 — Phase 0.5: Provider Foundation & Credit Removal
 
 > **Files touched:**
 > `alembic/versions/005_provider_foundation.py` · `app/models/user.py` · `app/models/provider_config.py` ·
@@ -23,8 +23,9 @@ The redesign throws all of that out. The new model is:
 - **Multiple concurrent jobs allowed.** `MAX_CONCURRENT_JOBS_PER_USER` (default 3) replaces the
   one-task-per-user hard limit.
 
-Phase 0.5 is purely a foundation reset. No new user-facing features. Just: strip the old model,
-lay the new one, keep the existing pipeline working, and make sure nothing breaks.
+Phase 0.5 is primarily a foundation reset: strip the old model, lay the new one,
+keep the existing pipeline working, and make sure nothing breaks. It also adds
+the provider-management API surface that the frontend later exposes.
 
 ---
 
@@ -283,9 +284,10 @@ multiple server instances ran simultaneously. That table is gone, the job is gon
 The `_run_probe` function SELECT-probes specific columns to verify the schema is migrated correctly.
 Before, it probed `credits_remaining` on `users` and the `system_state` table.
 
-After, it probes `default_provider_id` on `users` and `api_key_encrypted` on `provider_configs`.
-If you try to start the server against a database that hasn't had migration 005 applied, the probe
-fails with `schema_incompatible` before any request is served.
+After migration 005, it probes `default_provider_id` on `users` and `api_key_encrypted`
+on `provider_configs`. Phase 1 later extends the same readiness probe to cover `jobs`
+and `analysis_cache`. If you try to start the server against a database that has not
+had the relevant migrations applied, the probe fails with `schema_incompatible`.
 
 ---
 

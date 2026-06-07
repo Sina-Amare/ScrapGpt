@@ -67,7 +67,12 @@ within `READINESS_TIMEOUT_SECONDS` regardless of DB latency.
 
 1. **Connectivity** — `SELECT 1`
 2. **Migration state** — `SELECT version_num FROM alembic_version LIMIT 1` (must return a row)
-3. **Schema sanity** — `SELECT <columns> FROM users / scrape_tasks / system_state LIMIT 0`
+3. **Schema sanity** — column-level probes on:
+   - `users`
+   - `scrape_tasks`
+   - `provider_configs`
+   - `jobs`
+   - `analysis_cache`
 
 ---
 
@@ -81,7 +86,7 @@ within `READINESS_TIMEOUT_SECONDS` regardless of DB latency.
 2. **`schema_incompatible`**
    - Run pending migrations: `alembic upgrade head`.
    - Confirm the `alembic_version` table exists and has a row.
-   - Verify required tables (`users`, `scrape_tasks`, `system_state`) and their columns.
+   - Verify required tables (`users`, `scrape_tasks`, `provider_configs`, `jobs`, `analysis_cache`) and their columns.
 
 3. **`query_failed`**
    - Check DB user permissions (`SELECT` on all required tables).

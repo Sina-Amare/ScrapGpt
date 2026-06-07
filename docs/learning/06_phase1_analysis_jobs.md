@@ -1,4 +1,4 @@
-# Phase 1 — Analysis Jobs Pipeline
+# 06 — Phase 1: Analysis Jobs Pipeline
 
 ## Problem / Purpose
 
@@ -11,7 +11,7 @@ Phase 1 introduces the *Analysis Jobs* pipeline — the first step in ScrapGPT's
 5. Call the user's configured AI provider to analyze structure
 6. Return structured extraction recommendations (field selectors, confidence, warnings)
 
-The result is stored as a Job that transitions through a state machine from `QUEUED` to either `ANALYSIS_READY` (high confidence, no warnings) or `AWAITING_SETUP` (needs user review). Phase 2 will consume the `AWAITING_SETUP` output to start the actual extraction crawl.
+The result is stored as a Job that transitions through a state machine from `QUEUED` to either `ANALYSIS_READY` (high confidence, no warnings) or `AWAITING_SETUP` (analysis complete, but the future extraction setup/review phase is still required). Phase 2 will consume the `AWAITING_SETUP` output to start the actual extraction crawl.
 
 ---
 
@@ -55,7 +55,7 @@ The robots cache is a module-level dict keyed by origin (`scheme://host:port`) w
 
 ### Static fetch first, optional browser fallback
 
-`fetch_url(render_mode="AUTO")` fetches statically first. If the resulting HTML has fewer than 500 non-whitespace characters, it retries with Playwright (browser). `render_mode="STATIC"` skips the fallback; `render_mode="BROWSER"` skips the static attempt. Browser mode raises `FetchError(error_code="BROWSER_UNAVAILABLE")` if Playwright is not installed — tested cleanly because the package is optional.
+`fetch_url(render_mode="AUTO")` fetches statically first. If the resulting HTML has fewer than 500 non-whitespace characters, it retries with Playwright (browser). `render_mode="STATIC"` skips the fallback; `render_mode="BROWSER"` skips the static attempt. Browser mode raises `FetchError(error_code="BROWSER_UNAVAILABLE")` if Playwright is not installed. On Windows Uvicorn selector loops, browser rendering runs through the worker-thread sync Playwright path described below.
 
 **Rejected:** Always-browser. Too slow (~5s per page), too much memory, and most sites render fine statically.
 
@@ -91,7 +91,7 @@ At the end of the pipeline, `execute_job_pipeline` decides the final state:
 - `workflow_mode == FAST` AND `confidence >= ANALYSIS_CONFIDENCE_FAST_THRESHOLD` (default 0.75) AND `len(warnings) == 0` → `ANALYSIS_READY`
 - Otherwise → `AWAITING_SETUP`
 
-`AWAITING_SETUP` is the human gate. Phase 2 will add a `POST /jobs/{id}/start` endpoint for the user to review and confirm field configuration from `AWAITING_SETUP`.
+`AWAITING_SETUP` is the future human setup gate. Phase 1 does not implement the review/approve UI yet, so the frontend labels this as "Analysis complete" rather than "Needs review." Phase 2 will add a `POST /jobs/{id}/start` endpoint for the user to review and confirm field configuration from `AWAITING_SETUP`.
 
 ---
 
@@ -151,19 +151,45 @@ Validation order:
 Cache key: `f"{scheme}://{host}:{port}"` (origin). Cached value: `(expiry_timestamp, RobotFileParser | None)`.
 
 On 404: assume no restrictions → parser is `None`, treated as ALLOWED.
+On 3xx (redirect): **not followed**. `follow_redirects=False` is set on the client. If `resp.is_redirect` is true, return `None` (UNAVAILABLE) and apply `ROBOTS_FAILURE_POLICY`. This prevents SSRF via a robots.txt redirect to an internal metadata endpoint.
 On fetch exception: apply `ROBOTS_FAILURE_POLICY`.
 
 `check_robots` returns `RobotsCheck(result: RobotsResult, reason: str)`. The executor checks `result == RobotsResult.BLOCKED` → fail with `ROBOTS_BLOCKED`. `result == RobotsResult.UNAVAILABLE` with `ROBOTS_FAILURE_POLICY=deny` → fail with `ROBOTS_UNAVAILABLE`.
 
 #### `fetcher.py`
 
-`_static_fetch` uses `httpx.AsyncClient` with `follow_redirects=False`. It implements the redirect loop manually, calling `validate_redirect_target` on each `Location` header before following. This gives per-hop SSRF protection.
+`_static_fetch` uses `httpx.AsyncClient` with `follow_redirects=False`. It implements the redirect loop manually, calling `validate_redirect_target` on each `Location` header before following. This gives per-hop SSRF protection. A single client instance covers the full redirect chain, avoiding a new TLS handshake per hop.
 
-`MAX_FETCH_BYTES` truncation: `content = await response.aread(); content = content[:settings.MAX_FETCH_BYTES]`.
+Truncation: `body = await resp.aread()` then `body = body[:settings.MAX_FETCH_BYTES]` if over limit. `FetchResult.fetch_metadata` carries three explicit fields:
 
-`FetchResult.content_hash` is `hashlib.sha256(content).hexdigest()` — this is the cache key for analysis results.
+- `original_bytes`: size of the response before truncation
+- `analyzed_bytes`: size passed to analysis (≤ `MAX_FETCH_BYTES`)
+- `truncated`: `True` if the two differ
 
-`_browser_fetch` calls `playwright.async_api.async_playwright()`. If playwright is not installed, `importlib.import_module("playwright.async_api")` raises `ModuleNotFoundError`, caught and re-raised as `FetchError(error_code="BROWSER_UNAVAILABLE")`.
+`FetchResult.content_hash` is `hashlib.sha256(html.encode()).hexdigest()` — this is the cache key for analysis results.
+
+**Browser mode (`_browser_fetch`)**: Playwright is an **optional dependency** — not in `requirements.txt` by default. If it is not installed, the Playwright import raises `ImportError`, caught and re-raised as `FetchError(error_code="BROWSER_UNAVAILABLE")`.
+
+Install separately after the standard requirements:
+
+```bash
+pip install playwright
+python -m playwright install chromium
+```
+
+**Browser SSRF prevention** via `context.route("**", _route_handler)`: every outgoing request fires the handler before the TCP connection is established. For any `http://` or `https://` URL, `validate_url` is called. If it raises `URLValidationError` (private IP, blocked range), the handler calls `route.abort("blockedbyclient")` and appends a `FetchError(error_code="BROWSER_URL_BLOCKED")` to the shared `blocked` list.
+
+`blocked` is initialized **before** the outer `try:` block. This matters because real Playwright throws from `page.goto()` when a route handler aborts the main navigation — the exception propagates out through the `finally` cleanup blocks before the `if blocked: raise blocked[0]` guard inside the try is reached. The `except Exception as exc:` handler checks `blocked` first; if set, it re-raises the `BROWSER_URL_BLOCKED` error rather than wrapping it as the generic `FETCH_FAILED`.
+
+**DNS rebinding (TOCTOU) limitation**: `validate_url` resolves DNS in Python at check time. The browser re-resolves at TCP connect time. An attacker-controlled hostname can return a public IP during the Python check and a private IP for the actual browser connection. This race is not preventable at the application layer. Full mitigation requires an egress firewall or IP-pinned transport.
+
+After navigation, `validate_url` is called again on `page.url` (the post-navigation final URL) as a belt-and-suspenders check for JS-driven redirects that bypass the route handler.
+
+Page content is capped identically to static mode: `html_raw = (await page.content()).encode("utf-8"); html_raw = html_raw[:settings.MAX_FETCH_BYTES]`, with the same `original_bytes` / `analyzed_bytes` / `truncated` metadata fields in `fetch_metadata`.
+
+**Windows Uvicorn fix**: Uvicorn can run under a Windows selector event loop. That loop cannot create the subprocess Playwright needs for Chromium, causing `NotImplementedError`. The fetcher detects this condition and runs browser rendering through Playwright's sync API in a worker thread after switching the thread's event-loop policy to `WindowsProactorEventLoopPolicy`. The running Uvicorn loop is not replaced. This path is covered by tests and was smoke-tested by forcing a Windows selector loop for `https://example.com`.
+
+**Actionable browser errors**: Playwright can raise exceptions with an empty string. `_format_browser_exception` falls back to the exception class name, so jobs no longer store a blank message like `Browser fetch failed: `.
 
 #### `dom_summary.py`
 
@@ -285,7 +311,7 @@ Analogous to `taskPolling.ts`. Exports:
 - `TERMINAL_JOB_STATES`, `ACTIVE_JOB_STATES` — Set constants
 - `shouldPollJob(job, consecutiveFailures)` — stops on terminal state or 3 failures
 - `jobStateTone(state)` — maps to Badge color: ANALYSIS_READY=success, AWAITING_SETUP=accent, FAILED=danger, CANCELED=neutral, active=warning
-- `jobStateLabel(state)` — human-friendly labels ("Needs review" for AWAITING_SETUP)
+- `jobStateLabel(state)` — human-friendly labels ("Analysis complete" for AWAITING_SETUP, because review/approve controls are not implemented yet)
 
 ### Pages
 
@@ -319,7 +345,7 @@ execute_job_pipeline:
   workflow=GUIDED → transition ANALYZING → AWAITING_SETUP
 ```
 
-Frontend polls `/jobs/:id` at 2s. After ~8–15s the state becomes `AWAITING_SETUP`, polling stops, UI shows analysis results.
+Frontend polls `/jobs/:id` at 2s. After ~8–15s the state becomes `AWAITING_SETUP`, polling stops, and the UI shows the analysis result as complete. It does not show review/approve controls yet.
 
 ### Failure paths
 
@@ -328,6 +354,7 @@ Frontend polls `/jobs/:id` at 2s. After ~8–15s the state becomes `AWAITING_SET
 - **Fetch timeout**: httpx `ReadTimeout` → `FetchError(error_code="FETCH_TIMEOUT")` → `FAILED`
 - **LLM provider error**: `call_json_model` raises → outer catch → `FAILED(error_code="PROVIDER_ERROR")`
 - **Playwright missing**: `FetchError(error_code="BROWSER_UNAVAILABLE")` → `FAILED` immediately if `render_mode=BROWSER`
+- **Windows selector loop with Playwright**: fetcher uses the worker-thread sync Playwright path instead of failing with `NotImplementedError`
 - **Watchdog**: Job stuck in QUEUED/ANALYZING past timeout → force-failed with `WATCHDOG_TIMEOUT`
 
 ---

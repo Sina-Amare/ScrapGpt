@@ -19,7 +19,7 @@ import { ExtractionMode, JobResponse, RenderMode, WorkflowMode } from "../types"
 const STAGES: { state: string; label: string }[] = [
   { state: "QUEUED", label: "Queued" },
   { state: "ANALYZING", label: "Analyzing" },
-  { state: "AWAITING_SETUP", label: "Needs review" },
+  { state: "AWAITING_SETUP", label: "Complete" },
   { state: "ANALYSIS_READY", label: "Ready" },
 ];
 
@@ -199,9 +199,9 @@ export function NewJobPage() {
     <>
       <PageHeader title="New Analysis Job" eyebrow="Phase 1 — Site analysis" />
 
-      <div className="grid gap-6 lg:grid-cols-[400px_1fr]">
+      <div className="grid gap-6 lg:grid-cols-3">
         {/* Left: Form */}
-        <section className="rounded-xl border border-line bg-surface p-6 shadow-panel">
+        <section className="min-w-0 w-full overflow-hidden rounded-xl border border-line bg-surface p-6 shadow-panel lg:col-span-1">
           <div className="mb-5 flex items-center gap-3">
             <div className="grid h-10 w-10 place-items-center rounded-xl bg-teal-soft text-teal">
               <BrainCog className="h-5 w-5" />
@@ -214,7 +214,7 @@ export function NewJobPage() {
             </div>
           </div>
 
-          <form className="grid gap-4" onSubmit={onSubmit}>
+          <form className="grid gap-4 min-w-0 w-full" onSubmit={onSubmit}>
             {submitError ? <Alert tone="danger">{submitError}</Alert> : null}
 
             <Field label="URL to analyze">
@@ -242,8 +242,8 @@ export function NewJobPage() {
                 value={workflowMode}
                 onChange={(e) => setWorkflowMode(e.target.value as WorkflowMode)}
               >
-                <option value="GUIDED">Guided — review results before proceeding</option>
-                <option value="FAST">Fast — auto-advance if confidence is high</option>
+                <option value="GUIDED">Guided — analysis result only</option>
+                <option value="FAST">Fast — analysis result only</option>
               </Select>
             </Field>
 
@@ -292,7 +292,7 @@ export function NewJobPage() {
         </section>
 
         {/* Right: Live status */}
-        <section className="rounded-xl border border-line bg-surface p-6 shadow-panel">
+        <section className="min-w-0 rounded-xl border border-line bg-surface p-6 shadow-panel lg:col-span-2">
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
               <h2 className="font-bold text-ink">Analysis status</h2>
@@ -343,7 +343,7 @@ export function NewJobPage() {
                   <p className="font-semibold text-success">
                     {job.state === "ANALYSIS_READY"
                       ? "Analysis complete — high confidence result"
-                      : "Analysis complete — review required"}
+                      : "Analysis complete — extraction setup is not implemented yet"}
                   </p>
                   {job.confidence != null ? (
                     <p className="mt-1 text-muted">

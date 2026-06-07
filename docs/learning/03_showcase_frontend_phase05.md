@@ -1,4 +1,4 @@
-# 07 — Phase 0.5 Showcase Frontend: Task History, Key Reveal, Capability Panel
+# 03 — Frontend v0: Task History, Key Reveal, Capability Panel
 
 ## Purpose
 

@@ -99,7 +99,7 @@ function TextField({
         autoComplete={autoComplete}
         required={required}
         placeholder={placeholder}
-        className="h-11 rounded-xl border border-line bg-white px-3.5 text-sm text-ink outline-none transition placeholder:text-muted focus:border-teal focus:ring-2 focus:ring-teal/15"
+        className="h-11 w-full rounded-xl border border-line bg-white px-3.5 text-sm text-ink outline-none transition placeholder:text-muted focus:border-teal focus:ring-2 focus:ring-teal/15"
       />
     </label>
   );

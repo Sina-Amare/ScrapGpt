@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   isTerminalJob,
+  jobStateLabel,
   jobStateTone,
   shouldPollJob,
   TERMINAL_JOB_STATES,
@@ -98,5 +99,11 @@ describe("jobStateTone", () => {
   it("active states are warning", () => {
     assert.equal(jobStateTone("QUEUED"), "warning");
     assert.equal(jobStateTone("ANALYZING"), "warning");
+  });
+});
+
+describe("jobStateLabel", () => {
+  it("does not promise a review workflow for AWAITING_SETUP", () => {
+    assert.equal(jobStateLabel("AWAITING_SETUP"), "Analysis complete");
   });
 });

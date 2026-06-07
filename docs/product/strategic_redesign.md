@@ -1,6 +1,8 @@
 # ScrapGPT — Strategic Redesign: Open-Source BYOK Extraction Platform
 
 > **Last updated:** Round 2 review incorporated. See `docs/reviews/` history in git if you need the reasoning behind specific decisions.
+>
+> **Implementation status as of June 7, 2026:** Phase 0, Phase 0.5, frontend v0, and Phase 1 analysis jobs are implemented. This document remains the forward-looking roadmap for the remaining extraction setup/review, crawl execution, export, visual interaction, and authenticated-content phases. For the current runnable surface, see `docs/STATUS.md`.
 
 ## Context
 
@@ -200,7 +202,26 @@ Add: `analysis JSONB`, `render_mode`, `final_url`, `provider_config_id` (FK), `p
 
 `extraction_mode` is set at job creation and never changes. It determines which analysis schema the analyzer returns and which extraction path the crawl executor takes.
 
-### New Job State Machine
+### Job State Machine
+
+Current implemented Phase 1 states:
+
+```
+QUEUED
+  ↓
+ANALYZING
+  ↓
+ANALYSIS_READY | AWAITING_SETUP | FAILED | CANCELED
+
+TERMINAL_STATES = {ANALYSIS_READY, AWAITING_SETUP, FAILED, CANCELED}
+```
+
+`workflow_mode=GUIDED` normally lands in `AWAITING_SETUP` after analysis completes.
+`workflow_mode=FAST` lands in `ANALYSIS_READY` only when confidence is high and
+warnings are empty; otherwise it also lands in `AWAITING_SETUP`. Phase 1 does not
+start extraction yet.
+
+Target state machine after Phase 2:
 
 ```
 QUEUED
@@ -222,7 +243,11 @@ FAILED | CANCELED  ← Terminal from any non-terminal state
 TERMINAL_STATES = {COMPLETED, FAILED, CANCELED}
 ```
 
-`AWAITING_SETUP` is the human gate for Guided Mode. In **Fast Mode** (`fast_mode=true` on job creation), the job may transition directly from ANALYZING to DISCOVERING using AI defaults — but only when the analysis meets the confidence gate (see below). If it does not, the job automatically falls back to AWAITING_SETUP regardless of the `fast_mode` flag.
+`AWAITING_SETUP` becomes the human gate for Guided Mode once Phase 2 adds review/setup.
+In **Fast Mode** (`workflow_mode=FAST` on job creation), the job may transition directly
+from ANALYZING to DISCOVERING using AI defaults — but only when the analysis meets the
+confidence gate. If it does not, the job automatically falls back to AWAITING_SETUP
+regardless of the workflow mode.
 
 **Fast Mode confidence gate:** Fast Mode auto-start is permitted only when ALL of the following hold:
 - Overall analysis confidence ≥ `FAST_MODE_CONFIDENCE_THRESHOLD` (default: 0.80, configurable)
@@ -230,7 +255,9 @@ TERMINAL_STATES = {COMPLETED, FAILED, CANCELED}
 - Pagination is detected with reasonable confidence (not estimated as 1 page when the site clearly has more)
 - All candidate fields have individual confidence ≥ 0.70
 
-If any condition fails, the job moves to AWAITING_SETUP and the UI clearly explains why: *"We're not confident enough to extract automatically. Please review before starting."*
+If any condition fails after Phase 2, the job moves to AWAITING_SETUP and the UI
+clearly explains why: *"We're not confident enough to extract automatically. Please
+review before starting."*
 
 NORMALIZING is removed as a state. Normalization is a background operation on already-extracted records, not a blocking pipeline stage.
 
@@ -282,25 +309,33 @@ Caches AI analysis results by `content_hash`. Avoids re-calling AI for pages wit
 
 ---
 
-## 6. New API Surface
+## 6. API Surface
 
-### Existing endpoints (kept)
+### Implemented endpoints
 
 - `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`
 - `GET /health`, `GET /health/ready`, `GET /health/live`
 
-### New / Replaced endpoints
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET / POST / PATCH / DELETE` | `/providers` | CRUD for user's provider configs |
+| `POST` | `/providers/{id}/test` | Test provider connectivity + capability detection |
+| `POST` | `/providers/{id}/reveal-key` | Reveal own key after password confirmation |
+| `POST` | `/jobs` | Submit URL + `extraction_mode` + `workflow_mode` + `render_mode` → return 202 |
+| `GET` | `/jobs` | User's analysis job history |
+| `GET` | `/jobs/{id}` | Job status + analysis + fetch metadata |
+| `POST` | `/jobs/{id}/cancel` | Cancel `QUEUED` or `ANALYZING` job |
+| `DELETE` | `/jobs/{id}` | Delete terminal analysis job |
+| `POST` | `/scrape/start` | Legacy scrape task pipeline, still available but not primary |
+| `GET` | `/scrape/tasks`, `/scrape/tasks/{id}`, `/scrape/tasks/current` | Legacy scrape task list/detail/current |
+| `DELETE` | `/scrape/tasks/{id}` | Delete terminal legacy scrape task |
+
+### Planned endpoints
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET / POST / DELETE` | `/providers` | CRUD for user's provider configs |
-| `POST` | `/providers/{id}/test` | Test provider connectivity + capability detection |
-| `POST` | `/jobs` | Submit URL + `extraction_mode` + `fast_mode` → return 202 |
-| `GET` | `/jobs` | User's job history |
-| `GET` | `/jobs/{id}` | Job status + analysis + counts |
 | `POST` | `/jobs/{id}/start` | Submit field config from AWAITING_SETUP → start crawl |
 | `POST` | `/jobs/{id}/preview` | Dry-run extraction on seed page only → sample records |
-| `POST` | `/jobs/{id}/cancel` | Cancel any non-terminal job |
 | `GET` | `/jobs/{id}/records` | Paginated extracted records |
 | `GET` | `/jobs/{id}/export?format=csv` | Streaming file download |
 | `GET` | `/jobs/{id}/stream` | SSE live progress |
@@ -309,13 +344,13 @@ Caches AI analysis results by `content_hash`. Avoids re-calling AI for pages wit
 | `GET / POST / DELETE` | `/sessions` | Saved domain sessions for authenticated crawling (Phase 5) |
 | `GET / PUT` | `/users/me` | Profile management |
 
-Legacy `POST /scrape/start` removed.
+The legacy `/scrape` API is intentionally kept during the transition and is visually demoted in the frontend. It may be removed or replaced after the new extraction/crawl pipeline fully covers its use case.
 
 ---
 
 ## 7. Phased Roadmap
 
-### Phase 0.5 — Foundation Reset (~1 week)
+### Phase 0.5 — Foundation Reset (implemented)
 
 **Goal:** Remove the credit system, add provider management, establish resource control config.
 
@@ -325,7 +360,7 @@ Changes:
 - Migration: drop partial unique index from migration 003; replace with count-based admission check
 - Migration: create `provider_configs` table
 - New service: `app/services/provider_service.py` — CRUD, API key Fernet encryption/decryption, LiteLLM call wrapper with the JSON parsing pipeline (Section 3.1), capability detection
-- New endpoints: `/providers` CRUD + `/providers/{id}/test`
+- New endpoints: `/providers` CRUD + `/providers/{id}/test` + password-confirmed `/providers/{id}/reveal-key`
 - Update `app/services/admission.py`: check `MAX_CONCURRENT_JOBS_PER_USER` (configurable), no credit gate
 - Update `app/models/user.py`: remove credit fields, add `default_provider_id`
 - Update `app/core/config.py`: remove credit settings, add `PROVIDER_KEY_ENCRYPTION_SECRET` and resource control settings
@@ -345,19 +380,19 @@ The app must fail on startup — not on first use when keys are already being st
 
 ---
 
-### Phase 1 — Dual-Mode Analysis Engine (~2 weeks)
+### Phase 1 — Dual-Mode Analysis Engine (implemented)
 
 **Goal:** Intelligent site analysis that supports both extraction modes and both user workflows (Guided and Fast).
 
-What builds:
-- **URL validation service** (`app/services/url_validator.py`): SSRF prevention (block RFC 1918 ranges, loopback, link-local), scheme validation (https only unless `ALLOW_HTTP=true`), URL normalization
-- **Robots.txt service** (`app/services/robots.py`): parse and respect `robots.txt`; LRU cache; **default on fetch failure: conservative (deny)** — configurable via `ROBOTS_FETCH_FAILURE_POLICY`
-- **Fetcher service** (`app/services/fetcher.py`): static (httpx) + browser (Playwright), auto-detect render mode by checking content sparsity, content hash, configurable max page size
+What built:
+- **URL validation service** (`app/services/url_validator.py`): SSRF prevention (blocks RFC 1918 ranges, loopback, link-local, multicast, reserved ranges, and metadata IPs), scheme validation, redirect-target validation
+- **Robots.txt service** (`app/services/robots_service.py`): parse and respect `robots.txt`; TTL cache; default on fetch failure is conservative (`deny`) via `ROBOTS_FAILURE_POLICY`
+- **Fetcher service** (`app/services/fetcher.py`): static (httpx) + optional browser (Playwright), auto-detect render mode by checking content sparsity, content hash, configurable max page size, Windows Uvicorn selector-loop browser handling
 - **Analysis service** (`app/services/analyzer.py`): build DOM summary before sending to LLM (titles, headings, repeated patterns, schema.org JSON-LD — not full HTML); call LiteLLM with schema validation + retry; cache by `content_hash` in `analysis_cache` table; route to structured or content analysis schema based on `extraction_mode`
-- **State machine with Fast Mode**: QUEUED → ANALYZING → [AWAITING_SETUP optional] → DISCOVERING. `fast_mode=true` may bypass AWAITING_SETUP only if the Fast Mode confidence gate passes; otherwise it falls back to AWAITING_SETUP for user review.
-- **New pipeline**: `app/services/analysis_executor.py`
-- **New endpoints**: `POST /jobs` (accepts `extraction_mode`, `fast_mode`), `GET /jobs/{id}`, `GET /jobs`
-- `extraction_mode` and `fast_mode` are set at job creation and never change — migration must add these enum values now
+- **State machine with Fast Mode semantics**: `QUEUED → ANALYZING → ANALYSIS_READY | AWAITING_SETUP | FAILED | CANCELED`. `workflow_mode=FAST` can land in `ANALYSIS_READY` only when confidence is high and warnings are empty; otherwise analysis completes in `AWAITING_SETUP`.
+- **New pipeline**: `app/services/job_executor.py`
+- **New endpoints**: `POST /jobs` (accepts `extraction_mode`, `workflow_mode`, `render_mode`, optional provider), `GET /jobs/{id}`, `GET /jobs`, `POST /jobs/{id}/cancel`, `DELETE /jobs/{id}`
+- `extraction_mode`, `workflow_mode`, and `render_mode` are set at job creation and do not change during Phase 1
 
 **Structured analysis output schema:**
 ```json
@@ -390,14 +425,15 @@ What builds:
 }
 ```
 
-**The demo moment (Guided Mode):** Submit URL → 15 seconds → "Found 3 extractable fields: product name, price, rating. Estimated 847 items across 34 pages."
-**The demo moment (Fast Mode):** Submit URL → click Extract Now → job starts immediately with AI defaults. Zero configuration.
+**The implemented demo moment:** Submit URL → analysis job runs → frontend shows suggested fields/content structure, confidence, warnings, fetch metadata, and advanced selectors hidden behind a toggle.
+
+**Not implemented yet:** review/approve setup, `POST /jobs/{id}/start`, crawl execution, records, exports, visual field selection.
 
 ---
 
-### Phase 2 — Extraction Engine + Content Mode + Minimal Frontend (~3 weeks)
+### Phase 2 — Extraction Engine + Frontend Extraction Setup (~3 weeks)
 
-**Goal:** A working end-to-end pipeline for both output modes, accessible through a minimal but real UI.
+**Goal:** Extend the existing React frontend and backend into a working end-to-end extraction pipeline for both output modes.
 
 What builds:
 - **New DB models**: CrawlPage (with lease fields), ExtractionSpec (with `url_patterns`, `chunking_config`), ExtractedRecord (with `content_blocks`), Export, AnalysisCache
@@ -417,13 +453,13 @@ What builds:
 - **Export service** (`app/services/export.py`): CSV, JSON, JSONL, XLSX (structured); Markdown, chunked JSONL (content); streaming for large datasets; cached by `spec_hash`
 - **Watchdog update**: add timeouts for ANALYZING, DISCOVERING, EXTRACTING states; add lease expiry sweep
 
-**Minimal functional frontend** (built alongside the backend — not polished, but real):
-- Job creation: URL input, mode selector (Structured / Content), Fast Mode toggle
-- Analysis results: field labels, sample values, confidence indicators, "Customize" vs "Extract Now" buttons
-- Progress: live page counts, blocked/failed/extracted via SSE
-- Results: simple record list, export buttons
+**Frontend extension**:
+- Add review/setup controls to the existing Job Detail page.
+- Add preview extraction against the seed page before starting a crawl.
+- Add progress views for page counts, blocked/failed/extracted pages, and cancellation.
+- Add results tables and export buttons.
 
-This frontend is not Phase 3. It exists so the product is usable immediately after Phase 2 without waiting. Phase 3 rebuilds it properly.
+Phase 2 should build on the existing frontend shell rather than creating a throwaway UI. Phase 3 then focuses on visual field selection and higher-polish interaction design.
 
 **Per-page failure isolation is the core reliability invariant.** A 1000-page job with 10 blocked pages and 3 failures still delivers 987 pages of records.
 

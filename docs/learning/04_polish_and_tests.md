@@ -1,8 +1,8 @@
-# 08 — Polish Pass & Test Suite Completion
+# 04 — Frontend v0 Polish Pass & Test Suite Completion
 
 ## Problem / Purpose
 
-Before Phase 1 work begins (intelligent site analysis, new job state machine,
+Before Phase 1 began (intelligent site analysis, new job state machine,
 crawler infrastructure), the existing codebase needed to be made correct,
 observable, and verifiably stable. Specifically:
 
@@ -233,8 +233,9 @@ exception, the task reaches a terminal state.
 | `tests/api/v1/test_scrape_tasks.py` | 13 | List returns tasks, auth required, SQL uses user filter + ORDER BY + LIMIT, skip/limit params, invalid limit/skip 422, content_length null on list, error on FAILED, get_task content_length, content_length None when no content, 404 cross-user, 404 not found, result on COMPLETED |
 | `tests/api/v1/test_providers_extended.py` | 13 | List empty, list all (no key leakage), delete 204, delete 404, reveal auth required, reveal password required, reveal key decrypted, reveal key 404, encrypted blob never in response, test capability flags, test failure detail, test 404 |
 
-Total backend suite after the password-confirmed reveal and redaction fixes:
-**92 passing tests**.
+Total backend suite after this polish pass was **92 passing tests**. The current
+project suite is larger after Phase 1; see `docs/STATUS.md` for the latest
+verified counts.
 
 ---
 

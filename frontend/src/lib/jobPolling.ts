@@ -38,8 +38,8 @@ export function jobStateTone(
 export function jobStateLabel(state: JobState): string {
   if (state === "QUEUED") return "Queued";
   if (state === "ANALYZING") return "Analyzing…";
-  if (state === "AWAITING_SETUP") return "Needs review";
-  if (state === "ANALYSIS_READY") return "Ready";
+  if (state === "AWAITING_SETUP") return "Analysis complete";
+  if (state === "ANALYSIS_READY") return "Analysis ready";
   if (state === "FAILED") return "Failed";
   if (state === "CANCELED") return "Canceled";
   return state;
