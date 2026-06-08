@@ -2,7 +2,9 @@
 
 > **Last updated:** Round 2 review incorporated. See `docs/reviews/` history in git if you need the reasoning behind specific decisions.
 >
-> **Implementation status as of June 7, 2026:** Phase 0, Phase 0.5, frontend v0, Phase 1 analysis jobs, and the Project → Analyze → Field Selection → Preview → Extract → Results foundation are implemented. `/jobs` remains as a temporary compatibility API over project rows. This document remains the forward-looking roadmap for full multi-page crawl execution, visual interaction, advanced exports, and authenticated-content phases. For the current runnable surface, see `docs/STATUS.md`.
+> **Implementation status as of June 8, 2026:** Phase 0, Phase 0.5, frontend v0, Phase 1 analysis jobs, and the full Project workflow (Analyze → Field Selection → Preview → Extract → Results) are implemented and merged to `main`. The `project-workflow-migration` branch is complete. `/jobs` remains as a compatibility API over project rows. This document remains the forward-looking roadmap for full multi-page crawl execution, DOM summary improvements, visual interaction, advanced exports, and authenticated-content phases. For the current runnable surface, see `docs/STATUS.md`.
+>
+> **Known quality bottleneck (Phase 2 priority):** The current `build_dom_summary()` produces a 4,000-character structural excerpt. For complex pages (deep nesting, large tables, data-attribute-driven JS frameworks) this causes the AI to miss fields and produce incorrect selectors. See Section 3.7 for the improvement plan.
 
 ## Context
 
@@ -42,7 +44,9 @@ The key distinction from other tools: **AI is the analyst, not the crawler.** AI
 
 **Where the gap is:** No existing tool combines (1) visual, non-technical UX, (2) intelligent AI site analysis, (3) dual-mode output (structured + RAG-ready content), (4) deterministic CSS extraction engine, (5) full self-hosting, (6) BYOK multi-provider, (7) page-level checkpointing with crash recovery, in a single open-source platform.
 
-Crawl4AI and ScrapeGraphAI call the LLM on every page — expensive, slow, and unreliable at scale. Browse AI has non-technical UX but is SaaS-only. Firecrawl is closest in product feel but is SaaS-first and lacks visual field selection. The architectural insight — **AI understands the site once, code extracts all pages** — is the right one, and no open-source self-hosted tool has executed it with a non-technical UX.
+Crawl4AI and ScrapeGraphAI call the LLM on every page — expensive, slow, and unreliable at scale. Browse AI has non-technical UX but is SaaS-only. Firecrawl is closest in product feel but is SaaS-first, converts pages to unstructured Markdown (losing field-level structure), and has no visual field selection. The architectural insight — **AI understands the site once, code extracts all pages** — is the right one, and no open-source self-hosted tool has executed it with a non-technical UX.
+
+**The cost argument matters at scale:** A 500-page structured extraction with Firecrawl or Crawl4AI costs 500 LLM calls. With ScrapGPT it costs 1–3 (analysis + optional repairs). At 1,500 free requests/day on Google AI Studio, a user can analyze 500 sites per day rather than 3.
 
 ---
 
@@ -71,6 +75,17 @@ Mitigation:
   6. After 3 failures, surface the raw LLM response as an explicit user-facing error — never silently accept malformed or partially-repaired JSON
 
 Alternative considered: Build custom provider abstraction. Rejected — LiteLLM is mature, actively maintained, and handles retry, fallback, and cost tracking we'd otherwise build ourselves.
+
+**Provider free tier guidance (for documentation and onboarding):**
+
+| Provider | Free tier RPD | Free tier RPM | Structured output | Verdict |
+|----------|--------------|--------------|-------------------|---------|
+| Google AI Studio (Gemini 2.0 Flash) | 1,500 | 15 | ✅ Schema-enforced | **Recommended default** |
+| OpenRouter `:free` models | 50 (no deposit) / 1,000 ($10 deposit) | 20 (on paper) | ⚠️ Model-dependent | Testing/prototype only |
+| Ollama (local) | Unlimited | CPU-bound | ⚠️ Model-dependent | Good for privacy, slow |
+| OpenAI / Anthropic (paid) | — | — | ✅ Reliable | Best quality, paid only |
+
+Because ScrapGPT calls AI at most a few times per project (not per page), the Google AI Studio free tier (1,500 RPD) is sufficient for meaningful daily usage even without any payment. This should be the recommended starting point in the onboarding docs. OpenRouter free tier is not recommended for production use due to endemic 429 errors and a 50 RPD hard cap that a single retry loop can exhaust.
 
 ### 3.2 AI Role: Used Sparingly, Not Per-Page
 
@@ -119,6 +134,31 @@ Every extracted record stores both layers unconditionally:
 **Normalization invariant:** Normalization is structural and additive — parse, standardize, split. It must never summarize, compress, rewrite for clarity, or remove information present in `raw_data`. A user reading `normalized_data` must be able to verify it against `raw_data` with no information loss.
 
 Normalization is idempotent and reversible. `raw_data` is never touched.
+
+### 3.7 DOM Summary Quality — The AI Analysis Bottleneck
+
+The AI never sees the raw HTML. Before the LLM call, `build_dom_summary()` produces a compact structural excerpt that is sent instead. This is correct by design — sending full HTML would be expensive and noisy. But the current implementation is too thin for complex pages.
+
+**Current limits (known deficiencies):**
+
+- Max 8 headings, 12 links, 5 repeated CSS classes
+- 600-character body text snippet
+- Total cap: 4,000 characters
+- No table content, no nested item samples, no `data-*` attribute inspection
+
+**Consequence:** For pages with deep nesting, large HTML tables, JavaScript-driven attribute data (e.g., `data-price`, `data-sku`), or many sibling container classes, the AI receives an incomplete structural picture. This leads to wrong or overly-specific CSS selectors, missing fields, and artificially low confidence scores — none of which reflect actual page complexity.
+
+**Planned improvements for Phase 2 (`dom_summary.py`):**
+
+| Improvement | Why it matters |
+|-------------|----------------|
+| Sample full HTML of one repeated container item | AI sees the actual nested structure it must select from |
+| Table header + 2 sample rows for any `<table>` | Structured tables are a primary extraction target; currently invisible |
+| Expand repeated class limit from 5 to 15 | Sites with many component variants need broader coverage |
+| Scan and surface unique `data-*` attributes | Many modern JS apps store the real data in `data-price`, `data-id`, etc. |
+| Raise character cap from 4,000 to 10,000 | Modern frontier models handle this context cheaply; the quality gain is significant |
+
+These changes are localized to `app/services/dom_summary.py` and `app/services/analyzer.py`. No schema changes required. Expected impact: measurably higher selector accuracy and confidence scores on complex pages.
 
 ### 3.6 No Artificial Limits — Configurable Resource Controls
 
@@ -480,6 +520,7 @@ What builds:
 - **State machine**: AWAITING_SETUP → DISCOVERING → EXTRACTING → EXPORTING → COMPLETED
 - **New endpoint**: `POST /jobs/{id}/start` — accepts field config, creates ExtractionSpec, queues crawl pipeline
 - **New endpoint**: `POST /jobs/{id}/preview` — dry-run extraction against seed page only, returns sample records. Available after AWAITING_SETUP or after ANALYZING (Fast Mode). Critical for non-technical users to verify before committing to a full crawl.
+- **DOM Summary improvements** (`app/services/dom_summary.py`): expand to include full sample of one repeated container item, table headers + 2 rows, `data-*` attribute scan, raise repeated class limit from 5 to 15, raise character cap from 4,000 to 10,000. These changes directly improve AI selector accuracy for complex pages before any crawl begins.
 - **CSS extraction service** (`app/services/extractor.py`): lxml + cssselect, per-field extraction, type coercion, extraction warnings, raw data always preserved
 - **Content extraction service** (`app/services/content_extractor.py`): trafilatura (or readability-lxml) for clean text extraction, heading-aware chunking, metadata extraction, content_blocks generation
 - **URL normalizer** (`app/services/url_normalizer.py`): deduplication, tracking param stripping, same-site scope filtering
