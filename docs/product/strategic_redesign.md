@@ -2,9 +2,9 @@
 
 > **Last updated:** Round 2 review incorporated. See `docs/reviews/` history in git if you need the reasoning behind specific decisions.
 >
-> **Implementation status as of June 8, 2026:** Phase 0, Phase 0.5, frontend v0, Phase 1 analysis jobs, and the full Project workflow (Analyze → Field Selection → Preview → Extract → Results) are implemented and merged to `main`. The `project-workflow-migration` branch is complete. `/jobs` remains as a compatibility API over project rows. This document remains the forward-looking roadmap for full multi-page crawl execution, DOM summary improvements, visual interaction, advanced exports, and authenticated-content phases. For the current runnable surface, see `docs/STATUS.md`.
+> **Implementation status as of June 8, 2026:** Phase 0, Phase 0.5, frontend v0, Phase 1 analysis jobs, the Project workflow (Analyze → Field Selection → Preview → Extract → Results), and Phase 2 real extraction are implemented on the active project workflow branch. `/jobs` remains as a compatibility API over project rows. This document remains the forward-looking roadmap for quality/template intelligence, visual interaction, durable worker recovery, advanced exports, and authenticated-content phases. For the current runnable surface, see `docs/STATUS.md`.
 >
-> **Known quality bottleneck (Phase 2 priority):** The current `build_dom_summary()` produces a 4,000-character structural excerpt. For complex pages (deep nesting, large tables, data-attribute-driven JS frameworks) this causes the AI to miss fields and produce incorrect selectors. See Section 3.7 for the improvement plan.
+> **Current Phase 2 state:** `build_dom_summary()` now includes repeated container HTML samples, table samples, `data-*` attributes, up to 15 repeated classes, and a 10,000-character cap. Preview and extraction now execute selectors against real fetched HTML. Remaining quality work is template detection, selector repair, visual selection, and durable multi-worker recovery.
 
 ## Context
 
@@ -135,30 +135,32 @@ Every extracted record stores both layers unconditionally:
 
 Normalization is idempotent and reversible. `raw_data` is never touched.
 
-### 3.7 DOM Summary Quality — The AI Analysis Bottleneck
+### 3.7 DOM Summary Quality
 
 The AI never sees the raw HTML. Before the LLM call, `build_dom_summary()` produces a compact structural excerpt that is sent instead. This is correct by design — sending full HTML would be expensive and noisy. But the current implementation is too thin for complex pages.
 
-**Current limits (known deficiencies):**
+**Implemented Phase 2 improvements:**
 
-- Max 8 headings, 12 links, 5 repeated CSS classes
-- 600-character body text snippet
-- Total cap: 4,000 characters
-- No table content, no nested item samples, no `data-*` attribute inspection
+- Max 8 headings and 12 sample links.
+- Up to 15 repeated CSS classes.
+- HTML samples from repeated containers.
+- Table header/sample-row snippets.
+- `data-*` attribute inspection.
+- 600-character body text snippet.
+- Total cap: 10,000 characters.
 
-**Consequence:** For pages with deep nesting, large HTML tables, JavaScript-driven attribute data (e.g., `data-price`, `data-sku`), or many sibling container classes, the AI receives an incomplete structural picture. This leads to wrong or overly-specific CSS selectors, missing fields, and artificially low confidence scores — none of which reflect actual page complexity.
+**Remaining risk:** For very complex pages, one seed-page summary can still miss secondary templates, late-rendered components, or fields only present after interaction. Phase 3 quality work should add template fingerprints, field-level success rates, and selector repair.
 
-**Planned improvements for Phase 2 (`dom_summary.py`):**
+**Future improvements:**
 
 | Improvement | Why it matters |
 |-------------|----------------|
-| Sample full HTML of one repeated container item | AI sees the actual nested structure it must select from |
-| Table header + 2 sample rows for any `<table>` | Structured tables are a primary extraction target; currently invisible |
-| Expand repeated class limit from 5 to 15 | Sites with many component variants need broader coverage |
-| Scan and surface unique `data-*` attributes | Many modern JS apps store the real data in `data-price`, `data-id`, etc. |
-| Raise character cap from 4,000 to 10,000 | Modern frontier models handle this context cheaply; the quality gain is significant |
+| Template-specific summaries | Listing, detail, search, and category pages need different field assumptions |
+| Interaction-aware summaries | Some fields appear only after expanding accordions or tabs |
+| Field-level selector diagnostics | Users need to know which selectors fail on which page templates |
+| Visual selection fallback | Non-technical users need a non-CSS way to correct a bad selector |
 
-These changes are localized to `app/services/dom_summary.py` and `app/services/analyzer.py`. No schema changes required. Expected impact: measurably higher selector accuracy and confidence scores on complex pages.
+These improvements build on the current `dom_summary.py` foundation without changing the AI-per-site-not-per-page architecture.
 
 ### 3.6 No Artificial Limits — Configurable Resource Controls
 
@@ -264,15 +266,15 @@ FAILED | CANCELED are terminal from active paths.
 PAUSED is reserved for later crawler recovery/resume.
 ```
 
-Current foundation tables:
+Current project workflow tables:
 
 - `extraction_specs`: user-selected fields/content settings, separate from raw AI analysis.
-- `preview_results`: latest persisted sample preview for refresh/navigation safety.
-- `crawl_pages`: project-scoped page rows with state/lease/retry fields for future full crawler execution.
+- `preview_results`: latest persisted selector preview for refresh/navigation safety.
+- `crawl_pages`: project-scoped page rows with state/lease/retry fields for current crawl tracking and future durable recovery.
 - `extracted_records`: `raw_data` plus optional `normalized_data`, source URL, warnings.
 - `exports`: generated export metadata.
 
-Important current limitation: extraction is a seed/sample path based on the analyzed page and saved spec. The table design is ready for page-level crawler execution, but full BFS crawl execution is still future work.
+Important current limitation: extraction is a sequential in-process background task. Page rows are persisted and page failures are isolated, but true multi-worker claiming, heartbeats, and crash-resume lease recovery are still future work.
 
 ### Scrape Tasks / Legacy Jobs (modified)
 
@@ -409,17 +411,28 @@ Caches AI analysis results by `content_hash`. Avoids re-calling AI for pages wit
 | `GET` | `/scrape/tasks`, `/scrape/tasks/{id}`, `/scrape/tasks/current` | Legacy scrape task list/detail/current |
 | `DELETE` | `/scrape/tasks/{id}` | Delete terminal legacy scrape task |
 
-### Planned endpoints
+### Project endpoints
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/jobs/{id}/start` | Submit field config from AWAITING_SETUP → start crawl |
-| `POST` | `/jobs/{id}/preview` | Dry-run extraction on seed page only → sample records |
-| `GET` | `/jobs/{id}/records` | Paginated extracted records |
-| `GET` | `/jobs/{id}/export?format=csv` | Streaming file download |
-| `GET` | `/jobs/{id}/stream` | SSE live progress |
-| `GET` | `/jobs/{id}/pages` | Per-page crawl status (Phase 5) |
-| `POST` | `/jobs/{id}/pages/{page_id}/retry` | Requeue a specific failed page (Phase 5) |
+| `POST` | `/projects/analyze` | Analyze a URL and create a project |
+| `GET` | `/projects` | List user projects |
+| `GET` | `/projects/{id}` | Project detail, spec, preview, progress, and analysis |
+| `PATCH` | `/projects/{id}/spec` | Save field/content selection, page limit, export format |
+| `POST` | `/projects/{id}/preview` | Execute saved selectors on the seed page |
+| `POST` | `/projects/{id}/extract` | Start background same-site crawl/extraction |
+| `GET` | `/projects/{id}/records` | Paginated extracted records |
+| `GET` | `/projects/{id}/export?format=csv|json|xlsx` | Streaming file download |
+| `POST` | `/projects/{id}/cancel` | Cancel active project |
+| `DELETE` | `/projects/{id}` | Delete terminal project |
+
+### Future endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/projects/{id}/stream` | SSE live progress |
+| `GET` | `/projects/{id}/pages` | Per-page crawl status and diagnostics |
+| `POST` | `/projects/{id}/pages/{page_id}/retry` | Requeue a specific failed page |
 | `GET / POST / DELETE` | `/sessions` | Saved domain sessions for authenticated crawling (Phase 5) |
 | `GET / PUT` | `/users/me` | Profile management |
 
@@ -506,40 +519,33 @@ What built:
 
 **The implemented demo moment:** Submit URL → analysis job runs → frontend shows suggested fields/content structure, confidence, warnings, fetch metadata, and advanced selectors hidden behind a toggle.
 
-**Not implemented yet:** review/approve setup, `POST /jobs/{id}/start`, crawl execution, records, exports, visual field selection.
+**Now implemented:** project review/setup, real selector preview, same-site crawl execution, persisted records, and CSV/JSON/XLSX export through `/projects`. **Not implemented yet:** visual field selection, selector repair, authenticated content, and durable multi-worker recovery.
 
 ---
 
-### Phase 2 — Extraction Engine + Frontend Extraction Setup (~3 weeks)
+### Phase 2 — Extraction Engine + Frontend Extraction Setup (implemented)
 
 **Goal:** Extend the existing React frontend and backend into a working end-to-end extraction pipeline for both output modes.
 
-What builds:
-- **New DB models**: CrawlPage (with lease fields), ExtractionSpec (with `url_patterns`, `chunking_config`), ExtractedRecord (with `content_blocks`), Export, AnalysisCache
-- **Required indexes**: composite `(state, lease_expires_at)` on `crawl_pages`; composite `(task_id, state)`
-- **State machine**: AWAITING_SETUP → DISCOVERING → EXTRACTING → EXPORTING → COMPLETED
-- **New endpoint**: `POST /jobs/{id}/start` — accepts field config, creates ExtractionSpec, queues crawl pipeline
-- **New endpoint**: `POST /jobs/{id}/preview` — dry-run extraction against seed page only, returns sample records. Available after AWAITING_SETUP or after ANALYZING (Fast Mode). Critical for non-technical users to verify before committing to a full crawl.
-- **DOM Summary improvements** (`app/services/dom_summary.py`): expand to include full sample of one repeated container item, table headers + 2 rows, `data-*` attribute scan, raise repeated class limit from 5 to 15, raise character cap from 4,000 to 10,000. These changes directly improve AI selector accuracy for complex pages before any crawl begins.
-- **CSS extraction service** (`app/services/extractor.py`): lxml + cssselect, per-field extraction, type coercion, extraction warnings, raw data always preserved
-- **Content extraction service** (`app/services/content_extractor.py`): trafilatura (or readability-lxml) for clean text extraction, heading-aware chunking, metadata extraction, content_blocks generation
-- **URL normalizer** (`app/services/url_normalizer.py`): deduplication, tracking param stripping, same-site scope filtering
-- **Crawl executor** (`app/services/crawl_executor.py`):
-  - Discovery (DISCOVERING): BFS from seed, extract links, **batch-insert discovered URLs in chunks of 50–100 using `INSERT INTO crawl_pages ... ON CONFLICT DO NOTHING`** — no per-row inserts; respect `page_limit`
-  - Extraction (EXTRACTING): process QUEUED pages at `CRAWL_CONCURRENCY`. Per page: claim with `SELECT FOR UPDATE`, set `state=FETCHING, lease_expires_at=now+30s`, heartbeat every 10s, fetch, classify response (challenge detection), **branch on `extraction_mode`** (CSS selectors vs content extraction), **match URL against `url_patterns`** (structured mode), commit. Failed page → FAILED state, job continues.
-  - **Challenge detection**: HTTP 429 → `RATE_LIMITED` (auto-retry with backoff); CAPTCHA/bot wall → `CHALLENGE_REQUIRED`; 401/403 → `AUTH_REQUIRED`; persistent block → `BLOCKED`
-  - **Lease recovery**: APScheduler sweep every 30s resets expired `FETCHING` pages to `QUEUED`
-  - **Selector repair** (off by default): max 3 repair attempts per field per job; field marked `UNRELIABLE` after cap
-- **Export service** (`app/services/export.py`): CSV, JSON, JSONL, XLSX (structured); Markdown, chunked JSONL (content); streaming for large datasets; cached by `spec_hash`
-- **Watchdog update**: add timeouts for ANALYZING, DISCOVERING, EXTRACTING states; add lease expiry sweep
+What was built:
+- **Project workflow tables**: `crawl_pages`, `extraction_specs`, `preview_results`, `extracted_records`, `exports`, and `analysis_cache`.
+- **State machine**: AWAITING_SETUP / ANALYSIS_READY → PREVIEWING → PREVIEW_READY → DISCOVERING → EXTRACTING → EXPORTING → COMPLETED.
+- **Preview endpoint**: `POST /projects/{id}/preview` fetches the seed page and executes saved selectors for real sample rows.
+- **DOM Summary improvements** (`app/services/dom_summary.py`): repeated container samples, table samples, `data-*` attributes, repeated class limit 15, character cap 10,000.
+- **CSS extraction service** (`app/services/extractor.py`): BeautifulSoup CSS selectors, repeated container grouping, type coercion, extraction warnings, raw data always preserved.
+- **Content extraction path**: selected primary content text plus selected metadata fields, without per-page AI calls.
+- **URL normalizer** (`app/services/url_normalizer.py`): deduplication, tracking-param stripping, same-origin filtering, optional glob patterns.
+- **Background extraction executor** (`app/services/project_extraction.py`): same-site crawl, page-level state persistence, robots/SSRF reuse, per-page failure isolation, bounded by `page_limit`.
+- **Exports**: streamed CSV, JSON, and XLSX.
 
 **Frontend extension**:
-- Add review/setup controls to the existing Job Detail page.
-- Add preview extraction against the seed page before starting a crawl.
-- Add progress views for page counts, blocked/failed/extracted pages, and cancellation.
-- Add results tables and export buttons.
+- Project workspace field selection.
+- Real selector preview against the seed page.
+- Extraction controls with page limit and export format.
+- Page-state progress counts.
+- Results table and CSV/JSON/XLSX export buttons.
 
-Phase 2 should build on the existing frontend shell rather than creating a throwaway UI. Phase 3 then focuses on visual field selection and higher-polish interaction design.
+Remaining Phase 2-class gaps now move into Phase 3 quality/reliability work: concurrent workers, durable lease recovery, challenge classification, template routing, and selector repair.
 
 **Per-page failure isolation is the core reliability invariant.** A 1000-page job with 10 blocked pages and 3 failures still delivers 987 pages of records.
 
@@ -565,7 +571,7 @@ Stack: React + Vite + TypeScript + Tailwind + TanStack Query + Zustand + shadcn/
 
 **Extraction sandbox:**
 - Before committing to a full crawl, the user can click "Preview Extraction" to see what the current configuration would extract from the seed page.
-- Calls `POST /jobs/{id}/preview` and renders sample records.
+- Calls `POST /projects/{id}/preview` and renders selector-extracted sample records.
 - Non-technical users can verify "yes, that's the data I wanted" before running 500 pages.
 
 **Fast Mode UI:**

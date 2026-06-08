@@ -4,7 +4,7 @@
 
 ---
 
-## ۱. چطور اسکریپینگ انجام می‌شود (pipeline فعلی — فاز ۱)
+## ۱. چطور اسکریپینگ انجام می‌شود (pipeline فعلی — فاز ۲)
 
 یک پروژه از ۵ مرحله عبور می‌کند:
 
@@ -19,9 +19,11 @@ URL ورودی
     ↓
 [User Review] کاربر فیلدها را انتخاب و ویرایش می‌کند
     ↓
-[Seed Extraction] نمونه‌های AI به رکورد تبدیل می‌شوند
+[Preview] سلکتورها روی صفحه seed واقعاً اجرا می‌شوند
     ↓
-Export (CSV / JSON)
+[Extract] لینک‌های هم‌دامنه crawl می‌شوند و سلکتورها روی صفحات اجرا می‌شوند
+    ↓
+Export (CSV / JSON / XLSX)
 ```
 
 ### مرحله ۱ — Fetch (دریافت صفحه)
@@ -43,14 +45,17 @@ Export (CSV / JSON)
 - عنوان و meta description
 - حداکثر **۸ heading** (h1/h2/h3)
 - داده‌های **JSON-LD** (structured data سایت)
-- حداکثر **۵ کلاس CSS** که بیشترین تکرار دارند (احتمالاً container آیتم‌ها)
+- حداکثر **۱۵ کلاس CSS** که بیشترین تکرار دارند (احتمالاً container آیتم‌ها)
+- نمونه HTML از containerهای تکراری
+- نمونه tableها همراه با header/rowهای اول
+- attributeهای `data-*`
 - حداکثر **۱۲ لینک** نمونه
 - کنترل‌های احتمالی **pagination** (دکمه‌های next/prev)
 - یک snippet کوتاه از text بدنه صفحه
 
-همه این‌ها به حداکثر **۴۰۰۰ کاراکتر** محدود می‌شوند.
+همه این‌ها به حداکثر **۱۰۰۰۰ کاراکتر** محدود می‌شوند.
 
-**این محدودیت چه مشکلی ایجاد می‌کند؟** ساختارهای عمیق‌تر صفحه، فیلدهایی که در داخل nested divها هستند، و سلکتورهای پیچیده ممکن است از دید AI پنهان بمانند. → **این باید در فاز ۲ بهبود پیدا کند (بخش ۵ را ببین).**
+**محدودیت باقی‌مانده:** هنوز فقط seed page تحلیل می‌شود. اگر سایت چند template متفاوت داشته باشد (مثلاً listing و detail و category)، ممکن است فیلدهای یک template دیگر دیده نشود. این موضوع برای فاز کیفیت/Template Intelligence بعدی است.
 
 ### مرحله ۳ — AI Analysis (تحلیل با هوش مصنوعی)
 
@@ -90,15 +95,21 @@ Export (CSV / JSON)
 
 **Cache:** اگر همان صفحه با همان پروویدر/مدل قبلاً آنالیز شده باشد، AI دوباره فراخوانده نمی‌شود. کلید cache = `(content_hash, extraction_mode, provider, model, analyzer_version)`.
 
-### مرحله ۴ — Seed Extraction (استخراج نمونه)
+### مرحله ۴ — Preview و Extraction واقعی
 
-**این مهم‌ترین محدودیت فاز ۱ است:**
+در فاز ۲، سیستم دیگر `sample_values` هوش مصنوعی را به‌عنوان خروجی واقعی ذخیره نمی‌کند.
 
-در حال حاضر، سیستم CSS selector را واقعاً اجرا نمی‌کند. به جای آن، `sample_values` که AI در مرحله ۳ برگرداند را مستقیماً به ExtractedRecord تبدیل می‌کند.
+رفتار فعلی:
 
-یعنی اگر AI برای فیلد `price` مقادیر `["$19.99", "$24.50"]` را به عنوان نمونه برگرداند، دقیقاً همین ۲ رکورد در پایگاه داده ذخیره می‌شوند — نه تمام ۸۴۷ قیمت روی سایت.
+- `Preview` صفحه seed را دوباره fetch می‌کند و CSS selectorهای ذخیره‌شده را واقعاً اجرا می‌کند.
+- `Extract` یک background task شروع می‌کند.
+- لینک‌های هم‌دامنه از HTML کشف و normalize می‌شوند.
+- هر URL در جدول `crawl_pages` ذخیره می‌شود.
+- هر صفحه با همان safety path قبلی fetch می‌شود: URL validation + robots.txt + fetcher.
+- selectorها روی HTML اجرا می‌شوند و خروجی در `extracted_records` ذخیره می‌شود.
+- خروجی قابل دانلود به شکل CSV، JSON، و XLSX است.
 
-**این یعنی:** خروجی فاز ۱ همیشه ۲ تا ۵ رکورد نمونه است، نه کل داده‌های سایت.
+در structured mode اگر AI یک `repeated_item_selector` بدهد، استخراج رکوردها بر اساس همان containerهای تکراری انجام می‌شود. اگر چنین selectorی وجود نداشته باشد، سیستم fallback index-based انجام می‌دهد.
 
 ---
 
@@ -118,7 +129,7 @@ Export (CSV / JSON)
 | فایل‌های PDF | ❌ بلاک می‌شود | content-type مجاز نیست |
 | IPs خصوصی (`192.168.x.x`، `10.x.x.x`) | ❌ بلاک می‌شود | SSRF protection |
 | سایت‌های با Cloudflare/bot detection | ⚠️ کار می‌کند اما ناقص | صفحه challenge برگشت داده می‌شود |
-| سایت‌های چند-صفحه‌ای (pagination) | ⚠️ فاز ۱: فقط صفحه اول | فاز ۲: کل سایت |
+| سایت‌های چند-صفحه‌ای (pagination) | ✅ پایه‌ای | crawl هم‌دامنه تا page limit؛ template routing پیشرفته هنوز نیست |
 
 ---
 
@@ -137,7 +148,7 @@ Export (CSV / JSON)
 ### محدودیت‌های هوشمندی:
 
 - AI فقط DOM summary می‌بیند، نه کل صفحه — ساختارهای پیچیده ممکن است از دستش برود
-- Sample values که AI می‌دهد لزوماً دقیق نیستند — نمونه هستند، نه داده‌های واقعی
+- Preview و Extract با selector واقعی انجام می‌شود، اما اگر selector بد باشد، خروجی هم بد می‌شود
 - برای صفحات بسیار dynamic که ساختار DOM ندارند، سلکتورها اشتباه پیشنهاد می‌شوند
 - هر بار که layout سایت عوض شود، سلکتورها باید دوباره آنالیز شوند (فاز ۲: selector repair خودکار)
 
@@ -145,31 +156,34 @@ Export (CSV / JSON)
 
 ## ۴. مشکل داده‌های ناقص — دقیقاً کجاست؟
 
-### مشکل ۱: Seed extraction = فقط نمونه AI، نه کل داده
+### مشکل ۱: دقت selector و templateهای متفاوت
 
-**وضعیت فعلی:** خروجی extraction همان `sample_values` هستند که AI در prompt برگرداند. این ۲ تا ۵ نمونه هستند. برای یک dataset واقعی این کافی نیست.
+**وضعیت فعلی:** سیستم selectorها را واقعاً اجرا می‌کند و صفحات هم‌دامنه را crawl می‌کند. مشکل اصلی دیگر "فقط نمونه AI" نیست؛ مشکل اصلی این است که selector AI ممکن است برای همه templateهای سایت درست نباشد.
 
-**مثال:** سایت calories.info یک جدول بزرگ با صدها ردیف دارد، اما JavaScript آن را render می‌کند. در فاز ۱، فقط ۲ ردیفی که AI به عنوان نمونه پیشنهاد داد ذخیره می‌شوند — نه همه جدول.
+**مثال:** اگر seed page یک listing باشد، selectorهای listing روی detail page ممکن است مقدار خالی یا ناقص برگردانند.
 
-**رفع در فاز ۲:** CSS selector واقعاً اجرا می‌شود روی تمام صفحات crawl شده.
+**رفع آینده:** template fingerprinting، URL pattern routing بهتر، field quality stats، و selector repair.
 
 ---
 
 ### مشکل ۲: DOM Summary خیلی محدود است — کجاها باید بهتر شود
 
-**وضعیت فعلی:** `build_dom_summary()` خیلی کوچک است:
+**وضعیت فعلی:** `build_dom_summary()` در فاز ۲ بهتر شده است:
 - فقط ۸ heading
 - فقط ۱۲ لینک
-- فقط ۵ class CSS تکراری
+- ۱۵ class CSS تکراری
+- نمونه HTML containerهای تکراری
+- نمونه table
+- attributeهای `data-*`
 - فقط ۶۰۰ کاراکتر متن
-- کل چیزی که AI می‌بیند: ۴۰۰۰ کاراکتر
+- کل چیزی که AI می‌بیند: ۱۰۰۰۰ کاراکتر
 
-**نتیجه:** برای صفحات پیچیده:
+**ریسک باقی‌مانده:** برای صفحات پیچیده:
 1. سلکتورها اشتباه هستند چون AI ساختار واقعی DOM را ندیده
 2. فیلدهایی که در عمق نستینگ هستند کشف نمی‌شوند
 3. جداول بزرگ یا nested structures از دید AI پنهان می‌ماند
 
-**پیشنهاد بهبود DOM Summary (باید پیاده‌سازی شود):**
+**بهبودهای آینده DOM Summary:**
 
 | بهبود | توضیح |
 | ----- | ----- |
@@ -177,7 +191,7 @@ Export (CSV / JSON)
 | **بیشتر repeated containers** | از ۵ به ۱۵ افزایش پیدا کند؛ تمام containerهایی که ۳+ بار تکرار می‌شوند مهم هستند |
 | **نمونه‌برداری از nested items** | اگر `.product-card` یک container است، محتوای کامل یک نمونه از آن در summary باشد |
 | **attribute scanning** | `data-*` attribute‌ها اغلب حاوی داده‌های مهم (ID، قیمت، دسته‌بندی) هستند |
-| **افزایش حد کاراکتر** | از ۴۰۰۰ به ۸۰۰۰–۱۲۰۰۰ برسد — مدل‌های مدرن می‌توانند context بیشتری handle کنند |
+| **template-specific summary** | برای listing/detail/category جداگانه summary ساخته شود |
 | **chunk-based analysis** | برای صفحات خیلی پیچیده، DOM summary را بخش‌بخش کن و AI چندبار صدا بزن |
 
 ---
@@ -186,7 +200,7 @@ Export (CSV / JSON)
 
 وقتی URL می‌دهی، فقط همان صفحه آنالیز می‌شود. اگر سایت pagination دارد یا ۵۰ صفحه دارد، **هیچکدام از صفحات دیگر** fetch نمی‌شوند.
 
-**رفع در فاز ۲:** BFS crawl — از صفحه اول شروع، تمام لینک‌ها کشف، هر صفحه extract می‌شود.
+**وضعیت فعلی:** BFS crawl پایه‌ای پیاده‌سازی شده است. سیستم لینک‌های هم‌دامنه را کشف می‌کند و تا `page_limit` استخراج می‌کند. concurrent workers، lease recovery واقعی بعد از crash، و template-aware crawling هنوز آینده هستند.
 
 ---
 
@@ -210,67 +224,36 @@ Export (CSV / JSON)
 
 ## ۶. فازهای بعدی — چه چیزی تغییر می‌کند
 
-### فاز ۲ — Real Extraction Engine (مهم‌ترین فاز)
+### فاز ۲ — Real Extraction Engine (پیاده‌سازی شده)
 
-این فازی است که سیستم را از "نمونه‌نمایی" به "استخراج واقعی" تبدیل می‌کند.
+این فاز سیستم را از "نمونه‌نمایی" به "استخراج واقعی" تبدیل کرد.
 
-**چه چیزی build می‌شود:**
+**چه چیزی الان build شده است:**
 
-- **BFS crawl:** از صفحه seed شروع، تمام لینک‌های هم‌دامنه را کشف می‌کند تا `MAX_PAGES_PER_JOB` (پیش‌فرض ۵۰۰) صفحه
-- **CSS execution واقعی:** `lxml` + `cssselect` — سلکتوری که AI پیشنهاد داد روی همه صفحات اجرا می‌شود
-- **Per-page crash recovery:** هر صفحه یک ردیف در دیتابیس است با `lease_expires_at`. اگر سرور کرش کند، watchdog صفحات stuck را reset می‌کند
+- **BFS crawl پایه‌ای:** از صفحه seed شروع، لینک‌های هم‌دامنه را کشف می‌کند تا `MAX_PAGES_PER_JOB` / `page_limit`
+- **CSS execution واقعی:** سلکتوری که AI پیشنهاد داد روی صفحات اجرا می‌شود
+- **Page-level persistence:** هر صفحه یک ردیف در دیتابیس است. این پایه crash recovery آینده است، اما resume واقعی بعد از crash هنوز کامل نشده است
 - **Per-page failure isolation:** یک صفحه blocked → بقیه ادامه می‌دهند. یک job با ۱۰۰۰ صفحه که ۵ تا block شد، ۹۹۵ رکورد تحویل می‌دهد
-- **Challenge detection:**
-  - HTTP 429 → `RATE_LIMITED` — auto retry با exponential backoff
-  - Cloudflare/CAPTCHA → `CHALLENGE_REQUIRED` — job pause، کاربر باید دستی resolve کند
-  - 401/403 → `AUTH_REQUIRED`
-  - Permanent block → `BLOCKED`
-- **Selector repair:** اگر یک سلکتور N صفحه پشت‌هم چیزی برنگرداند، AI دوباره صدا زده می‌شود
+- **Blocked/failed page tracking:** robots/URL/fetch failure در سطح صفحه ثبت می‌شود و کل پروژه را الزاماً نمی‌کشد
+- **Export:** CSV / JSON / XLSX
 
 **نتیجه:** برای یک سایت با ۵۰۰ محصول، فاز ۲ همه ۵۰۰ محصول را extract می‌کند، نه ۳ نمونه.
 
 ---
 
-### بهبود DOM Summary (باید در فاز ۲ پیاده‌سازی شود)
+### بهبود DOM Summary (پیاده‌سازی شده، با ریسک باقی‌مانده)
 
 این موردی است که تو مستقیماً اشاره کردی: "سیستم سامری هم باید تغییر بدیم تا اطلاعات ناقص نشه"
 
-**پیشنهاد implementation برای `build_dom_summary()`:**
+در فاز ۲ این موارد اضافه شد:
 
-```python
-# اضافه کردن به build_dom_summary:
+- نمونه HTML از repeated containers
+- table samples
+- `data-*` attributes
+- افزایش repeated classes از ۵ به ۱۵
+- افزایش سقف summary به ۱۰۰۰۰ کاراکتر
 
-# 1. نمونه کامل از repeated containers
-containers = _repeated_containers(soup)
-for cls in containers[:3]:
-    sample_el = soup.find(class_=cls)
-    if sample_el and isinstance(sample_el, Tag):
-        # یک نمونه کامل از محتوای container
-        parts.append(f"Sample item in .{cls}:\n{str(sample_el)[:500]}")
-
-# 2. جداول — header + 2 ردیف نمونه
-for table in soup.find_all("table")[:2]:
-    headers = [th.get_text(strip=True) for th in table.find_all("th")]
-    rows = table.find_all("tr")
-    sample_rows = [
-        [td.get_text(strip=True)[:50] for td in row.find_all("td")]
-        for row in rows[1:3]  # 2 ردیف نمونه
-    ]
-    if headers:
-        parts.append(f"Table headers: {headers}\nSample rows: {sample_rows}")
-
-# 3. data-* attributes مهم
-data_attrs = {}
-for tag in soup.find_all(True):
-    for attr, val in tag.attrs.items():
-        if isinstance(attr, str) and attr.startswith("data-"):
-            data_attrs[attr] = str(val)[:50]
-if data_attrs:
-    parts.append(f"Data attributes: {dict(list(data_attrs.items())[:10])}")
-
-# 4. افزایش حد از 4000 به 10000
-_MAX_SUMMARY_CHARS = 10000
-```
+ریسک باقی‌مانده: اگر سایت چند template متفاوت داشته باشد، تحلیل یک seed page کافی نیست. این باید در فاز بعد با template intelligence و selector quality stats حل شود.
 
 ---
 
@@ -295,30 +278,26 @@ _MAX_SUMMARY_CHARS = 10000
 
 ## ۷. خلاصه: الان چه می‌تواند و چه نمی‌تواند
 
-### می‌تواند (Phase 1 — همین الان):
+### می‌تواند (Phase 2 — همین الان):
 - ✅ هر URL عمومی را آنالیز کند و فیلدهای قابل استخراج پیشنهاد دهد
 - ✅ ساختار صفحه، نوع محتوا، و pagination را خودکار تشخیص دهد
 - ✅ صفحات JavaScript-rendered را با Playwright بخواند
-- ✅ ۲–۵ رکورد نمونه به عنوان preview نشان دهد
-- ✅ به‌عنوان proof-of-concept یا validation tool عالی است
+- ✅ preview واقعی از اجرای selector روی صفحه seed نشان دهد
+- ✅ لینک‌های هم‌دامنه را تا page limit crawl کند
+- ✅ CSS selector واقعی را روی صفحات اجرا کند
+- ✅ رکوردهای واقعی را در دیتابیس ذخیره کند
 - ✅ Cache کند تا برای URL یکسان دوباره AI فراخوانده نشود
-- ✅ داده را به CSV/JSON export کند
+- ✅ داده را به CSV/JSON/XLSX export کند
 
-### نمی‌تواند (فاز ۱):
-- ❌ همه محصولات/ردیف‌های یک سایت را extract کند (فقط ۲–۵ نمونه)
-- ❌ از صفحه ۱ به صفحه ۲، ۳، ... برود (multi-page crawl نیست)
+### نمی‌تواند / هنوز کامل نیست:
+- ❌ template routing هوشمند برای سایت‌هایی با layoutهای متعدد
+- ❌ selector repair خودکار
+- ❌ resume کامل بعد از crash با worker lease recovery
+- ❌ crawler concurrent چند-worker
 - ❌ وارد سایت‌های نیاز به login شود
 - ❌ CAPTCHA حل کند
 - ❌ PDF یا محتوای غیر HTML بخواند
-- ❌ برای ساخت dataset کامل استفاده شود
-
-### می‌تواند (Phase 2 — باید build شود):
-- ✅ کل سایت را crawl کند (BFS، صفحه‌بندی را دنبال کند)
-- ✅ CSS selector واقعی روی همه صفحات اجرا کند
-- ✅ هزاران رکورد extract کند
-- ✅ در صورت crash از آخرین صفحه ادامه دهد
-- ✅ صفحات blocked را مدیریت کند بدون اینکه کل job شکست بخورد
-- ✅ برای dataset collection واقعی استفاده شود
+- ❌ challenge handling پیشرفته یا bypass
 
 ---
 
@@ -407,15 +386,15 @@ _MAX_SUMMARY_CHARS = 10000
 ## ۹. نتیجه‌گیری: آیا این همان چیزی است که می‌خواهی؟
 
 **اگر می‌خواهی داده‌های واقعی در مقیاس بزرگ جمع‌آوری کنی:**
-→ فاز ۱ به تنهایی کافی نیست. فاز ۲ (Real Extraction Engine) باید build شود.
+→ فاز ۲ پایه واقعی این کار را ایجاد کرده است: crawl هم‌دامنه، selector execution، رکورد واقعی، export. برای production قابل اعتمادتر، فاز بعد باید quality/template intelligence بسازد.
 
 **اگر می‌خواهی بهتر از Firecrawl باشی:**
 → مزیت اصلی ما AI-once + CSS-everywhere است. این را باید در UI و README به وضوح توضیح دهیم.
 
 **اگر می‌خواهی داده‌ها کامل و با کیفیت بالا باشند:**
-→ باید DOM Summary بهبود پیدا کند (جداول، nested containers، data attributes). این یک تغییر نسبتاً کوچک در `dom_summary.py` است اما تأثیر بزرگی روی کیفیت تحلیل AI دارد.
+→ حالا DOM Summary بهتر شده، اما باید field quality stats، template detection، و selector repair اضافه شود.
 
 **پیشنهاد ترتیب اولویت‌ها:**
-1. بهبود `build_dom_summary()` (سریع، تأثیر فوری روی کیفیت)
-2. فاز ۲ — Real CSS extraction + BFS crawl (اصلی‌ترین feature)
-3. بهبود UI برای نشان دادن تفاوت Phase 1 (preview/sample) vs Phase 2 (real extraction)
+1. Quality layer: field success rate، page/template diagnostics، selector health
+2. Template intelligence و URL pattern routing بهتر
+3. Visual field selection برای کم کردن نیاز به CSS

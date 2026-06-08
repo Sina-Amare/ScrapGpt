@@ -2,6 +2,9 @@
 
 import csv
 import io
+import json
+import zipfile
+from html import escape
 
 from fastapi import (
     APIRouter,
@@ -44,7 +47,7 @@ from app.services.extraction_spec_service import ensure_default_spec, latest_spe
 from app.services.job_admission import JobAdmissionError, JobAdmissionErrorType, admit_job
 from app.services.job_executor import execute_job_pipeline
 from app.services.job_state import transition_job_to_canceled
-from app.services.project_extraction import list_records, run_seed_extraction
+from app.services.project_extraction import execute_project_extraction, list_records, start_project_extraction
 from app.services.project_preview import create_preview, latest_preview
 from app.services.project_status import confidence_label, detected_type, product_status_for
 
@@ -52,9 +55,15 @@ router = APIRouter(prefix="/projects", tags=["Projects"])
 
 
 async def _progress(db: AsyncSession, project_id: int) -> ExtractionProgress:
-    crawl_pages = await db.scalar(
+    crawl_pages_total = await db.scalar(
         select(func.count(CrawlPage.id)).where(CrawlPage.project_id == project_id)
     )
+    page_counts_result = await db.execute(
+        select(CrawlPage.state, func.count(CrawlPage.id))
+        .where(CrawlPage.project_id == project_id)
+        .group_by(CrawlPage.state)
+    )
+    page_counts = {state.value if hasattr(state, "value") else str(state): int(count) for state, count in page_counts_result}
     records = await db.scalar(
         select(func.count(ExtractedRecord.id)).where(ExtractedRecord.project_id == project_id)
     )
@@ -62,7 +71,12 @@ async def _progress(db: AsyncSession, project_id: int) -> ExtractionProgress:
         select(func.count(Export.id)).where(Export.project_id == project_id)
     )
     return ExtractionProgress(
-        crawl_pages_total=int(crawl_pages or 0),
+        crawl_pages_total=int(crawl_pages_total or 0),
+        crawl_pages_pending=page_counts.get("PENDING", 0),
+        crawl_pages_fetching=page_counts.get("FETCHING", 0),
+        crawl_pages_extracted=page_counts.get("EXTRACTED", 0),
+        crawl_pages_blocked=page_counts.get("BLOCKED", 0),
+        crawl_pages_failed=page_counts.get("FAILED", 0),
         extracted_records_total=int(records or 0),
         exports_total=int(exports or 0),
     )
@@ -299,7 +313,11 @@ async def preview_project(
     }:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Project is not ready for preview")
 
-    preview = await create_preview(db, project, spec)
+    try:
+        preview = await create_preview(db, project, spec)
+    except Exception as exc:
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     await db.commit()
     await db.refresh(preview)
     return _preview_response(preview)  # type: ignore[return-value]
@@ -308,6 +326,7 @@ async def preview_project(
 @router.post("/{project_id}/extract", response_model=ProjectResponse, summary="Extract records")
 async def extract_project(
     project_id: int,
+    background_tasks: BackgroundTasks,
     payload: ExtractRequest | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -328,9 +347,10 @@ async def extract_project(
     }:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Project is not ready for extraction")
 
-    await run_seed_extraction(db, project, spec, preview)
+    await start_project_extraction(db, project, spec)
     await db.commit()
     await db.refresh(project)
+    background_tasks.add_task(execute_project_extraction, project.id, spec.id)
     return await _project_response(db, project)
 
 
@@ -362,18 +382,22 @@ async def export_project(
     project_id: int,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    format: str = Query(default="csv", pattern="^(csv|json)$"),
+    format: str = Query(default="csv", pattern="^(csv|json|xlsx)$"),
 ) -> Response:
     await _owned_project(db, user, project_id)
     records = await list_records(db, project_id, 0, 5000)
     data = [record.normalized_data or record.raw_data for record in records]
     if format == "json":
-        import json
-
         return Response(
             content=json.dumps(data),
             media_type="application/json",
             headers={"Content-Disposition": f'attachment; filename="project-{project_id}.json"'},
+        )
+    if format == "xlsx":
+        return Response(
+            content=_xlsx_bytes(data),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="project-{project_id}.xlsx"'},
         )
 
     output = io.StringIO()
@@ -386,6 +410,74 @@ async def export_project(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="project-{project_id}.csv"'},
     )
+
+
+def _xlsx_bytes(rows: list[dict]) -> bytes:
+    """Generate a small XLSX workbook using the stdlib zipfile module."""
+    columns = sorted({key for row in rows for key in row.keys()})
+    sheet_rows = [_xlsx_row(1, columns)]
+    for index, row in enumerate(rows, start=2):
+        sheet_rows.append(_xlsx_row(index, [row.get(column, "") for column in columns]))
+
+    sheet_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        "<sheetData>"
+        + "".join(sheet_rows)
+        + "</sheetData></worksheet>"
+    )
+    workbook_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="Results" sheetId="1" r:id="rId1"/></sheets></workbook>'
+    )
+    rels_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+        "</Relationships>"
+    )
+    workbook_rels_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+        "</Relationships>"
+    )
+    content_types_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        "</Types>"
+    )
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", content_types_xml)
+        archive.writestr("_rels/.rels", rels_xml)
+        archive.writestr("xl/workbook.xml", workbook_xml)
+        archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml)
+        archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    return output.getvalue()
+
+
+def _xlsx_row(index: int, values: list) -> str:
+    cells = []
+    for col_index, value in enumerate(values, start=1):
+        ref = f"{_excel_column(col_index)}{index}"
+        text = escape("" if value is None else str(value))
+        cells.append(f'<c r="{ref}" t="inlineStr"><is><t>{text}</t></is></c>')
+    return f'<row r="{index}">' + "".join(cells) + "</row>"
+
+
+def _excel_column(index: int) -> str:
+    label = ""
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        label = chr(65 + remainder) + label
+    return label
 
 
 @router.post("/{project_id}/cancel", response_model=ProjectResponse, summary="Cancel active project")

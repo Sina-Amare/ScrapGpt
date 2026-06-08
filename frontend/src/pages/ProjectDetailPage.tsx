@@ -156,6 +156,8 @@ export function ProjectDetailPage() {
   const projectId = Number(id);
   const [failureCount, setFailureCount] = useState(0);
   const [fields, setFields] = useState<FieldSpec[]>([]);
+  const [pageLimit, setPageLimit] = useState(500);
+  const [exportFormat, setExportFormat] = useState("csv");
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const projectQuery = useQuery({
@@ -191,15 +193,17 @@ export function ProjectDetailPage() {
   useEffect(() => {
     if (project?.spec?.fields) {
       setFields(project.spec.fields);
+      setPageLimit(project.spec.page_limit);
+      setExportFormat(project.spec.export_format);
     }
-  }, [project?.spec?.fields, project?.spec?.id]);
+  }, [project?.spec?.fields, project?.spec?.id, project?.spec?.page_limit, project?.spec?.export_format]);
 
   const saveSpec = useMutation({
     mutationFn: () =>
       api.updateProjectSpec(projectId, {
         fields,
-        page_limit: project?.spec?.page_limit,
-        export_format: project?.spec?.export_format
+        page_limit: pageLimit,
+        export_format: exportFormat
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
@@ -346,6 +350,29 @@ export function ProjectDetailPage() {
               </Button>
             </div>
             {extractMutation.error ? <Alert tone="danger">{extractMutation.error.message}</Alert> : null}
+            <div className="mb-5 grid gap-4 md:grid-cols-[220px_220px_1fr]">
+              <label className="grid gap-1 text-sm font-semibold text-ink">
+                Page limit
+                <Input
+                  type="number"
+                  min={1}
+                  max={5000}
+                  value={pageLimit}
+                  onChange={(event) => setPageLimit(Number(event.target.value))}
+                />
+              </label>
+              <label className="grid gap-1 text-sm font-semibold text-ink">
+                Export format
+                <Select value={exportFormat} onChange={(event) => setExportFormat(event.target.value)}>
+                  <option value="csv">CSV</option>
+                  <option value="json">JSON</option>
+                  <option value="xlsx">XLSX</option>
+                </Select>
+              </label>
+              <div className="rounded-lg border border-line bg-porcelain p-4 text-sm text-muted">
+                Extraction crawls same-site pages up to the page limit and skips pages blocked by robots.txt or URL safety checks.
+              </div>
+            </div>
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="rounded-lg border border-line bg-porcelain p-4">
                 <p className="text-xs font-bold uppercase tracking-widest text-muted">Pages</p>
@@ -360,6 +387,23 @@ export function ProjectDetailPage() {
                 <p className="mt-1 text-xl font-bold text-ink">{project.progress.exports_total}</p>
               </div>
             </div>
+            <div className="mt-4 grid gap-3 text-sm sm:grid-cols-5">
+              <span className="rounded-md border border-line bg-surface px-3 py-2 text-muted">
+                Pending <strong className="text-ink">{project.progress.crawl_pages_pending}</strong>
+              </span>
+              <span className="rounded-md border border-line bg-surface px-3 py-2 text-muted">
+                Fetching <strong className="text-ink">{project.progress.crawl_pages_fetching}</strong>
+              </span>
+              <span className="rounded-md border border-line bg-surface px-3 py-2 text-muted">
+                Extracted <strong className="text-ink">{project.progress.crawl_pages_extracted}</strong>
+              </span>
+              <span className="rounded-md border border-line bg-surface px-3 py-2 text-muted">
+                Blocked <strong className="text-ink">{project.progress.crawl_pages_blocked}</strong>
+              </span>
+              <span className="rounded-md border border-line bg-surface px-3 py-2 text-muted">
+                Failed <strong className="text-ink">{project.progress.crawl_pages_failed}</strong>
+              </span>
+            </div>
           </section>
 
           <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
@@ -369,10 +413,20 @@ export function ProjectDetailPage() {
                 <p className="text-sm text-muted">Extracted records from this project.</p>
               </div>
               {records.length ? (
-                <Button variant="secondary" onClick={() => void api.exportProject(project.id, "csv")}>
-                  <Download className="h-4 w-4" />
-                  CSV
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="secondary" onClick={() => void api.exportProject(project.id, "csv")}>
+                    <Download className="h-4 w-4" />
+                    CSV
+                  </Button>
+                  <Button variant="secondary" onClick={() => void api.exportProject(project.id, "json")}>
+                    <Download className="h-4 w-4" />
+                    JSON
+                  </Button>
+                  <Button variant="secondary" onClick={() => void api.exportProject(project.id, "xlsx")}>
+                    <Download className="h-4 w-4" />
+                    XLSX
+                  </Button>
+                </div>
               ) : null}
             </div>
             <RecordsTable rows={records.map((record) => record.normalized_data ?? record.raw_data)} />

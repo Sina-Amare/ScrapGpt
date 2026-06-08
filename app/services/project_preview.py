@@ -8,6 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.job import ExtractionSpec, PreviewResult, Project, ProjectState
+from app.services.extractor import extract_records_from_html
+from app.services.fetcher import FetchError, fetch_url
+from app.services.robots_service import RobotsResult, check_robots
+from app.services.url_validator import URLValidationError, validate_url
 
 
 def _selected_fields(spec: ExtractionSpec) -> list[dict[str, Any]]:
@@ -69,6 +73,64 @@ def build_preview_payload(project: Project, spec: ExtractionSpec) -> dict[str, A
     }
 
 
+async def build_selector_preview_payload(project: Project, spec: ExtractionSpec) -> dict[str, Any]:
+    """Fetch the seed page and execute saved selectors for a real preview."""
+    try:
+        validated_url = validate_url(project.normalized_url or project.url)
+    except URLValidationError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+    robots = await check_robots(validated_url)
+    if robots.result == RobotsResult.BLOCKED:
+        raise RuntimeError(f"robots.txt disallows previewing this URL: {robots.reason}")
+    if robots.result == RobotsResult.UNAVAILABLE:
+        raise RuntimeError(f"robots.txt unavailable and policy=deny: {robots.reason}")
+
+    try:
+        fetched = await fetch_url(validated_url, project.render_mode.value)
+    except FetchError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+    extracted = extract_records_from_html(
+        fetched.html,
+        source_url=fetched.final_url,
+        project=project,
+        spec=spec,
+        max_records=5,
+    )
+    sample_records = [item.normalized_data for item in extracted[:5]]
+    selected_fields = _selected_fields(spec)
+    missing_fields = []
+    for field in selected_fields:
+        key = field.get("user_label") or field.get("label") or field.get("name")
+        if key and not any(record.get(str(key)) not in (None, "") for record in sample_records):
+            missing_fields.append(
+                {
+                    "name": field.get("name"),
+                    "label": key,
+                    "reason": "No value was found by the saved selector on the preview page.",
+                }
+            )
+    warnings = list(project.warnings or [])
+    for item in extracted:
+        warnings.extend(item.warnings)
+
+    return {
+        "sample_records": sample_records,
+        "warnings": list(dict.fromkeys(str(warning) for warning in warnings if warning)),
+        "missing_fields": missing_fields,
+        "quality_summary": {
+            "sample_record_count": len(sample_records),
+            "selected_field_count": len(selected_fields),
+            "missing_field_count": len(missing_fields),
+            "warning_count": len(warnings),
+            "source": "selector_preview",
+            "final_url": fetched.final_url,
+            "render_mode_used": fetched.render_mode_used.value,
+        },
+    }
+
+
 async def latest_preview(db: AsyncSession, project_id: int) -> PreviewResult | None:
     result = await db.execute(
         select(PreviewResult)
@@ -87,7 +149,15 @@ async def create_preview(
     project.transition_to(ProjectState.PREVIEWING)
     await db.flush()
 
-    payload = build_preview_payload(project, spec)
+    try:
+        payload = await build_selector_preview_payload(project, spec)
+    except Exception as exc:
+        project.transition_to(ProjectState.FAILED)
+        project.error = f"Preview failed: {exc}"
+        project.error_code = "PREVIEW_FAILED"
+        await db.flush()
+        raise
+
     preview = PreviewResult(
         project_id=project.id,
         spec_id=spec.id,

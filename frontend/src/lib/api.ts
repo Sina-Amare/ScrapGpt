@@ -362,8 +362,14 @@ export const api = {
     return apiRequest<void>(`/projects/${id}`, { method: "DELETE" });
   },
 
-  async exportProject(id: number, format: "csv" | "json" = "csv"): Promise<void> {
-    const headers: Record<string, string> = { Accept: format === "json" ? "application/json" : "text/csv" };
+  async exportProject(id: number, format: "csv" | "json" | "xlsx" = "csv"): Promise<void> {
+    const accept =
+      format === "json"
+        ? "application/json"
+        : format === "xlsx"
+          ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          : "text/csv";
+    const headers: Record<string, string> = { Accept: accept };
     if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
     const response = await fetch(`${apiBaseUrl}/projects/${id}/export?format=${format}`, { headers });
     if (!response.ok) throw new ApiError(response.status, await response.text());

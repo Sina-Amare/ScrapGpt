@@ -10,6 +10,8 @@ Read these in order to understand what exists now and how it was built:
 4. [learning/03_showcase_frontend_phase05.md](learning/03_showcase_frontend_phase05.md) — first frontend shell and provider/task UX.
 5. [learning/06_phase1_analysis_jobs.md](learning/06_phase1_analysis_jobs.md) — Phase 1 analysis jobs: URL safety, robots, fetcher, DOM summary, cached LLM analysis, frontend jobs UI.
 6. [learning/07_frontend_robustness_and_polish.md](learning/07_frontend_robustness_and_polish.md) — final Phase 1 UX polish and browser error handling.
+7. [learning/08_project_workflow_migration.md](learning/08_project_workflow_migration.md) — Project workflow migration: Analyze → Fields → Preview → Extract → Results.
+8. [learning/09_phase2_real_extraction_engine.md](learning/09_phase2_real_extraction_engine.md) — real selector preview, same-site crawling, persisted records, and CSV/JSON/XLSX export.
 
 Use the remaining learning docs when you need detail about the older legacy scrape pipeline or security fixes.
 
@@ -33,6 +35,8 @@ Added after every non-trivial implementation task. Explain the *why*, not just t
 - [learning/05_task_deletion_and_results_view.md](learning/05_task_deletion_and_results_view.md) — Why: task result viewing and terminal-task deletion.
 - [learning/06_phase1_analysis_jobs.md](learning/06_phase1_analysis_jobs.md) — Why: Phase 1 analysis jobs, SSRF-safe fetch, robots, DOM summary, cached LLM analysis.
 - [learning/07_frontend_robustness_and_polish.md](learning/07_frontend_robustness_and_polish.md) — Why: layout robustness, honest analysis-state copy, legacy nav demotion, browser error quality.
+- [learning/08_project_workflow_migration.md](learning/08_project_workflow_migration.md) — Why: migrate from jobs to projects and preserve compatibility while adding spec/preview/results contracts.
+- [learning/09_phase2_real_extraction_engine.md](learning/09_phase2_real_extraction_engine.md) — Why: replace seed/sample extraction with deterministic selector execution and bounded same-site crawling.
 
 ## Operations
 

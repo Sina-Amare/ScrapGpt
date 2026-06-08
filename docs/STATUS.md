@@ -1,6 +1,6 @@
 # ScrapGPT Status
 
-Last verified: June 7, 2026.
+Last verified: June 8, 2026.
 
 ## Implemented
 
@@ -56,6 +56,18 @@ Last verified: June 7, 2026.
     - Advanced drawer for mode/render/provider overrides.
     - Project workspace with Overview, Fields, Preview, Extraction, Results, and Advanced sections.
     - `/jobs` frontend routes redirect to `/projects`.
+- Phase 2 real extraction engine:
+  - DOM summary now includes richer repeated-container samples, table samples, data attributes, up to 15 repeated classes, and a 10,000-character cap.
+  - Preview executes saved CSS selectors against the seed page instead of showing AI sample values.
+  - Extraction runs as a background project task after `POST /projects/{id}/extract`.
+  - Same-site links are discovered from fetched HTML and normalized with tracking parameters stripped.
+  - Crawl execution is bounded by the saved spec `page_limit` and `MAX_PAGES_PER_JOB`.
+  - Every crawled URL is persisted in `crawl_pages` with page-level states: pending, fetching, extracted, blocked, or failed.
+  - Extracted records are produced by deterministic selector execution and stored in `extracted_records`.
+  - Structured extraction groups records by the AI-provided `repeated_item_selector` when available, with index-based extraction as fallback.
+  - Content extraction stores the selected primary content text plus selected metadata fields.
+  - Results can be exported as CSV, JSON, or XLSX.
+  - The project workspace shows page-limit/export controls and page-state progress counts.
 
 ## Current Primary Workflow
 
@@ -66,19 +78,18 @@ Last verified: June 7, 2026.
 5. Watch the project move through analysis.
 6. Open the project workspace when it is ready.
 7. Select fields and edit user-facing field labels.
-8. Run Preview to inspect sample rows.
-9. Run Extract to persist seed/sample records.
-10. Inspect Results and download CSV/JSON through the export endpoint.
+8. Run Preview to inspect real selector output from the seed page.
+9. Run Extract to crawl same-site pages, execute saved selectors, and persist real records.
+10. Inspect Results and download CSV, JSON, or XLSX through the export endpoint.
 
 The older Legacy Scrape page still exists for the `/scrape` pipeline, but it is no longer the primary product flow.
 
 ## Not Implemented Yet
 
 - Visual field selection.
-- Full multi-page crawl execution.
-- Template routing and selector repair.
-- Background extraction workers beyond the current seed/sample extraction path.
-- File-backed export storage beyond streamed CSV/JSON responses.
+- Concurrent crawler workers and lease-based resume after process crash.
+- Template routing, DOM fingerprinting, and selector repair.
+- File-backed export storage beyond streamed CSV/JSON/XLSX responses.
 - Authenticated-content browser sessions.
 - CAPTCHA solving, stealth browser patches, proxy evasion, or challenge bypass.
 
@@ -97,7 +108,6 @@ npm run build
 
 Results:
 
-- Backend: 159 passed.
+- Backend: 161 passed.
 - Frontend tests: 31 passed.
 - Frontend typecheck, lint, and production build: passed.
-- Browser render smoke with Windows selector event loop: passed for `https://example.com`.

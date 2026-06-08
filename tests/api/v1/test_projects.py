@@ -36,6 +36,9 @@ class _NoRows:
     def scalar_one_or_none(self):
         return None
 
+    def __iter__(self):
+        return iter(())
+
 
 class _Result:
     def scalar_one_or_none(self):

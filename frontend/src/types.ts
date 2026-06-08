@@ -223,7 +223,7 @@ export type ExtractionSpecResponse = {
   content_config: Record<string, unknown>;
   url_patterns: Record<string, unknown>[];
   page_limit: number;
-  export_format: "csv" | "json" | string;
+  export_format: "csv" | "json" | "xlsx" | string;
   created_at: string;
   updated_at: string | null;
 };
@@ -241,6 +241,11 @@ export type PreviewResponse = {
 
 export type ExtractionProgress = {
   crawl_pages_total: number;
+  crawl_pages_pending: number;
+  crawl_pages_fetching: number;
+  crawl_pages_extracted: number;
+  crawl_pages_blocked: number;
+  crawl_pages_failed: number;
   extracted_records_total: number;
   exports_total: number;
 };

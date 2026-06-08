@@ -66,8 +66,8 @@ class ExtractionSpecUpdate(BaseModel):
     @field_validator("export_format")
     @classmethod
     def validate_export_format(cls, value: str | None) -> str | None:
-        if value is not None and value not in ("csv", "json"):
-            raise ValueError("export_format must be csv or json")
+        if value is not None and value not in ("csv", "json", "xlsx"):
+            raise ValueError("export_format must be csv, json, or xlsx")
         return value
 
 
@@ -97,6 +97,11 @@ class PreviewResponse(BaseModel):
 
 class ExtractionProgress(BaseModel):
     crawl_pages_total: int = 0
+    crawl_pages_pending: int = 0
+    crawl_pages_fetching: int = 0
+    crawl_pages_extracted: int = 0
+    crawl_pages_blocked: int = 0
+    crawl_pages_failed: int = 0
     extracted_records_total: int = 0
     exports_total: int = 0
 

@@ -8,10 +8,12 @@ import re
 from bs4 import BeautifulSoup, Tag
 
 _NOISE_TAGS = {"script", "style", "noscript", "head", "meta", "link", "svg", "iframe"}
-_MAX_SUMMARY_CHARS = 4000
+_MAX_SUMMARY_CHARS = 10000
 _MAX_HEADINGS = 8
 _MAX_LINKS = 12
-_MAX_REPEAT_CLASSES = 5
+_MAX_REPEAT_CLASSES = 15
+_MAX_TABLES = 3
+_MAX_DATA_ATTRS = 20
 
 
 def _text(el: Tag) -> str:
@@ -43,6 +45,62 @@ def _repeated_containers(soup: BeautifulSoup) -> list[str]:
         cls for cls, count in sorted(class_counts.items(), key=lambda x: -x[1]) if count >= 3
     ]
     return repeated[:_MAX_REPEAT_CLASSES]
+
+
+def _selector_for_sample(tag: Tag) -> str:
+    classes = tag.get("class", [])
+    if isinstance(classes, list) and classes:
+        return tag.name + "." + ".".join(str(cls) for cls in classes[:2])
+    tag_id = tag.get("id")
+    if tag_id:
+        return f"{tag.name}#{tag_id}"
+    return tag.name
+
+
+def _repeated_container_samples(soup: BeautifulSoup, classes: list[str]) -> list[str]:
+    samples: list[str] = []
+    for cls in classes[:5]:
+        tag = soup.find(class_=cls)
+        if not isinstance(tag, Tag):
+            continue
+        html = re.sub(r"\s+", " ", str(tag))[:900]
+        samples.append(f"Selector hint: {_selector_for_sample(tag)}\nHTML sample: {html}")
+    return samples
+
+
+def _table_samples(soup: BeautifulSoup) -> list[str]:
+    tables: list[str] = []
+    for index, table in enumerate(soup.find_all("table")[:_MAX_TABLES], start=1):
+        if not isinstance(table, Tag):
+            continue
+        rows = []
+        for row in table.find_all("tr")[:3]:
+            cells = [
+                _text(cell)
+                for cell in row.find_all(["th", "td"])
+                if isinstance(cell, Tag) and _text(cell)
+            ]
+            if cells:
+                rows.append(" | ".join(cells))
+        if rows:
+            tables.append(f"Table {index} sample:\n" + "\n".join(f"  {row}" for row in rows))
+    return tables
+
+
+def _data_attributes(soup: BeautifulSoup) -> list[str]:
+    attrs: dict[str, str] = {}
+    for tag in soup.find_all(True):
+        if not isinstance(tag, Tag):
+            continue
+        for key, value in tag.attrs.items():
+            if not key.startswith("data-") or key in attrs:
+                continue
+            attrs[key] = str(value)[:120]
+            if len(attrs) >= _MAX_DATA_ATTRS:
+                break
+        if len(attrs) >= _MAX_DATA_ATTRS:
+            break
+    return [f"{key}={value!r}" for key, value in attrs.items()]
 
 
 def _pagination_candidates(soup: BeautifulSoup) -> list[str]:
@@ -108,6 +166,19 @@ def build_dom_summary(html: str, url: str = "") -> str:
     repeated = _repeated_containers(soup)
     if repeated:
         parts.append("Repeated element classes (likely list/grid items): " + ", ".join(f".{c}" for c in repeated))
+        samples = _repeated_container_samples(soup, repeated)
+        if samples:
+            parts.append("Repeated container HTML samples:\n" + "\n\n".join(samples))
+
+    # Table samples
+    tables = _table_samples(soup)
+    if tables:
+        parts.append("Table samples:\n" + "\n\n".join(tables))
+
+    # Data attributes
+    data_attrs = _data_attributes(soup)
+    if data_attrs:
+        parts.append("Data attributes found:\n  " + "\n  ".join(data_attrs))
 
     # Sample links
     links = []
