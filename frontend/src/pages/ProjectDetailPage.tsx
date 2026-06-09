@@ -1,7 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, Download, RefreshCw, Save, XCircle } from "lucide-react";
+import { AlertCircle, ArrowLeft, Check, Download, RefreshCw, Save, XCircle } from "lucide-react";
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { FrontierPreviewPanel } from "../components/project/FrontierPreviewPanel";
+import { PaginatedResultsTable } from "../components/project/PaginatedResultsTable";
+import { ScopeSelector } from "../components/project/ScopeSelector";
+import { TrustSummaryPanel } from "../components/project/TrustSummaryPanel";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -11,7 +15,8 @@ import { Select } from "../components/ui/Select";
 import { Skeleton } from "../components/ui/Skeleton";
 import { ApiError, api } from "../lib/api";
 import { ACTIVE_PROJECT_STATES, projectTone, shouldPollProject } from "../lib/projectPolling";
-import { FieldSpec, ProjectRecord } from "../types";
+import { isUserConfirmed, requiresConfirmation, scopeModeLabel } from "../lib/scopeCopy";
+import { CrawlScope, CrawlScopeMode, CrawlScopeStatus, FieldSpec, ProjectRecord } from "../types";
 
 function ConfidenceBar({ value }: { value: number | null }) {
   const pct = value == null ? 0 : Math.round(value * 100);
@@ -98,7 +103,7 @@ function FieldEditor({
         </thead>
         <tbody className="divide-y divide-line bg-surface">
           {fields.map((field, index) => (
-            <tr key={`${field.name}-${index}`} className="hover:bg-teal-soft/30">
+            <tr key={`${field.name ?? ""}-${index}`} className="hover:bg-teal-soft/30">
               <td className="px-4 py-3">
                 <input
                   className="h-4 w-4 accent-teal"
@@ -158,7 +163,14 @@ export function ProjectDetailPage() {
   const [fields, setFields] = useState<FieldSpec[]>([]);
   const [pageLimit, setPageLimit] = useState(500);
   const [exportFormat, setExportFormat] = useState("csv");
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showDeveloper, setShowDeveloper] = useState(false);
+
+  // Crawl scope draft state
+  const [draftMode, setDraftMode] = useState<CrawlScopeMode | null>(null);
+  // Stale preview tracking: true when scope was saved after the last preview was generated
+  const [scopeChangedAfterPreview, setScopeChangedAfterPreview] = useState(false);
+  // Scope confirmation error from extract 409
+  const [extractScopeError, setExtractScopeError] = useState<string | null>(null);
 
   const projectQuery = useQuery({
     queryKey: ["project", projectId],
@@ -181,14 +193,28 @@ export function ProjectDetailPage() {
     retry: false
   });
 
-  const recordsQuery = useQuery({
-    queryKey: ["project-records", projectId],
-    queryFn: () => api.listProjectRecords(projectId),
-    enabled: projectQuery.data?.system_state === "COMPLETED",
-    retry: false
-  });
-
   const project = projectQuery.data;
+  const savedScope = project?.spec?.crawl_scope ?? null;
+
+  // Compute the effective scope for display: merge saved scope with local draft mode.
+  const effectiveDraftMode: CrawlScopeMode =
+    draftMode ?? savedScope?.mode ?? "CURRENT_PAGE";
+  const effectiveScope: CrawlScope | null = savedScope
+    ? {
+        ...savedScope,
+        mode: effectiveDraftMode,
+        // clear confirmation when mode diverges from what's saved
+        status: effectiveDraftMode !== savedScope.mode
+          ? ("AI_SUGGESTED" as CrawlScopeStatus)
+          : savedScope.status,
+        user_confirmed_at:
+          effectiveDraftMode !== savedScope.mode ? null : savedScope.user_confirmed_at,
+      }
+    : null;
+
+  const scopeNeedsConfirmation =
+    requiresConfirmation(effectiveDraftMode) &&
+    !isUserConfirmed(effectiveScope?.status);
 
   useEffect(() => {
     if (project?.spec?.fields) {
@@ -196,18 +222,62 @@ export function ProjectDetailPage() {
       setPageLimit(project.spec.page_limit);
       setExportFormat(project.spec.export_format);
     }
-  }, [project?.spec?.fields, project?.spec?.id, project?.spec?.page_limit, project?.spec?.export_format]);
+    // Sync draft mode when spec changes (e.g. after save)
+    if (project?.spec?.crawl_scope?.mode && draftMode === null) {
+      setDraftMode(project.spec.crawl_scope.mode);
+    }
+  }, [project?.spec?.fields, project?.spec?.id, project?.spec?.page_limit, project?.spec?.export_format, project?.spec?.crawl_scope?.mode, draftMode]);
 
   const saveSpec = useMutation({
     mutationFn: () =>
       api.updateProjectSpec(projectId, {
         fields,
         page_limit: pageLimit,
-        export_format: exportFormat
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
+    }
+  });
+
+  // Save crawl scope mode (without confirmation)
+  const saveScopeMutation = useMutation({
+    mutationFn: (newMode: CrawlScopeMode) =>
+      api.updateProjectSpec(projectId, {
+        crawl_scope: {
+          ...(savedScope ?? {}),
+          mode: newMode,
+        } as Partial<CrawlScope>
+      }),
+    onSuccess: () => {
+      setScopeChangedAfterPreview(true);
+      void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+    }
+  });
+
+  // Confirm crawl scope
+  const confirmScopeMutation = useMutation({
+    mutationFn: () =>
+      api.updateProjectSpec(projectId, {
+        crawl_scope: {
+          ...(savedScope ?? {}),
+          mode: effectiveDraftMode,
+          status: "USER_CONFIRMED" as CrawlScopeStatus,
+          user_confirmed_at: new Date().toISOString(),
+        } as Partial<CrawlScope>
+      }),
+    onSuccess: () => {
+      setExtractScopeError(null);
+      void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+    }
+  });
+
+  // Frontier preview
+  const frontierPreviewMutation = useMutation({
+    mutationFn: () => api.createFrontierPreview(projectId),
+    onSuccess: () => {
+      setScopeChangedAfterPreview(false);
+      void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
     }
   });
 
@@ -222,9 +292,23 @@ export function ProjectDetailPage() {
   const extractMutation = useMutation({
     mutationFn: () => api.extractProject(projectId, false),
     onSuccess: () => {
+      setExtractScopeError(null);
       void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
-      void queryClient.invalidateQueries({ queryKey: ["project-records", projectId] });
+      void queryClient.invalidateQueries({ queryKey: ["project-records-page", projectId] });
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        const detail = error.detail as
+          | { detail?: { error_code?: string } | null }
+          | null;
+        if (detail?.detail?.error_code === "SCOPE_NOT_CONFIRMED") {
+          setExtractScopeError(
+            "Confirm what ScrapGPT should crawl before extraction."
+          );
+          return;
+        }
+      }
     }
   });
 
@@ -236,7 +320,29 @@ export function ProjectDetailPage() {
     }
   });
 
-  const records: ProjectRecord[] = recordsQuery.data ?? [];
+  const isCompleted = project?.system_state === "COMPLETED";
+  const isActive = project ? ACTIVE_PROJECT_STATES.has(project.system_state) : false;
+
+  // Legacy records fallback (used in sample preview only)
+  const legacyRecordsQuery = useQuery({
+    queryKey: ["project-records", projectId],
+    queryFn: () => api.listProjectRecords(projectId),
+    enabled: isCompleted,
+    retry: false
+  });
+  const legacyRecords: ProjectRecord[] = legacyRecordsQuery.data ?? [];
+
+  function handleModeChange(mode: CrawlScopeMode) {
+    setDraftMode(mode);
+    // Save immediately for CURRENT_PAGE; for broad modes, wait for confirmation click
+    if (mode === "CURRENT_PAGE") {
+      saveScopeMutation.mutate(mode);
+    }
+  }
+
+  function handleConfirmScope() {
+    confirmScopeMutation.mutate();
+  }
 
   return (
     <>
@@ -252,7 +358,7 @@ export function ProjectDetailPage() {
             <RefreshCw className="h-4 w-4" />
             Refresh
           </Button>
-          {project && ACTIVE_PROJECT_STATES.has(project.system_state) ? (
+          {isActive ? (
             <Button variant="danger" onClick={() => cancelMutation.mutate()}>
               <XCircle className="h-4 w-4" />
               Cancel
@@ -270,6 +376,8 @@ export function ProjectDetailPage() {
         <Alert tone="danger">Could not load project.</Alert>
       ) : project ? (
         <div className="grid gap-6">
+
+          {/* Overview */}
           <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
               <div className="min-w-0">
@@ -297,6 +405,63 @@ export function ProjectDetailPage() {
             ) : null}
           </section>
 
+          {/* Crawl Scope */}
+          <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
+            <div className="mb-4">
+              <h2 className="font-bold text-ink">Crawl scope</h2>
+              <p className="text-sm text-muted">Choose what ScrapGPT should crawl before extraction.</p>
+            </div>
+            {saveScopeMutation.error ? (
+              <div className="mb-4"><Alert tone="danger">{saveScopeMutation.error.message}</Alert></div>
+            ) : null}
+            {confirmScopeMutation.error ? (
+              <div className="mb-4"><Alert tone="danger">{confirmScopeMutation.error.message}</Alert></div>
+            ) : null}
+            {project.spec ? (
+              <ScopeSelector
+                crawlScope={effectiveScope}
+                disabled={isActive || saveScopeMutation.isPending || confirmScopeMutation.isPending}
+                onModeChange={handleModeChange}
+                onConfirm={handleConfirmScope}
+              />
+            ) : (
+              <p className="text-sm text-muted">Scope will be available after analysis.</p>
+            )}
+            {/* Show "save scope" button for broad modes that changed without confirming */}
+            {draftMode !== null && draftMode !== savedScope?.mode && draftMode !== "CURRENT_PAGE" ? (
+              <div className="mt-3 flex items-center gap-3">
+                <AlertCircle className="h-4 w-4 text-warning" />
+                <span className="text-sm text-muted">
+                  Scope mode changed to <strong>{scopeModeLabel(draftMode)}</strong>. Save to confirm.
+                </span>
+                <Button
+                  variant="secondary"
+                  disabled={saveScopeMutation.isPending}
+                  onClick={() => saveScopeMutation.mutate(draftMode)}
+                >
+                  {saveScopeMutation.isPending ? "Saving..." : "Save scope"}
+                </Button>
+              </div>
+            ) : null}
+          </section>
+
+          {/* Frontier Preview */}
+          <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
+            <div className="mb-4">
+              <h2 className="font-bold text-ink">Page preview</h2>
+              <p className="text-sm text-muted">See what pages will be crawled before starting extraction.</p>
+            </div>
+            <FrontierPreviewPanel
+              preview={project.frontier_preview}
+              loading={frontierPreviewMutation.isPending}
+              error={frontierPreviewMutation.error?.message ?? null}
+              stale={scopeChangedAfterPreview}
+              disabled={!project.spec || isActive}
+              onGenerate={() => frontierPreviewMutation.mutate()}
+            />
+          </section>
+
+          {/* Fields */}
           <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -312,11 +477,12 @@ export function ProjectDetailPage() {
             <FieldEditor fields={fields} onChange={setFields} />
           </section>
 
+          {/* Sample Preview */}
           <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="font-bold text-ink">Preview</h2>
-                <p className="text-sm text-muted">Check a sample before running extraction.</p>
+                <h2 className="font-bold text-ink">Sample preview</h2>
+                <p className="text-sm text-muted">Check sample data before running extraction.</p>
               </div>
               <Button onClick={() => previewMutation.mutate()} disabled={!project.spec || previewMutation.isPending}>
                 <Check className="h-4 w-4" />
@@ -338,21 +504,59 @@ export function ProjectDetailPage() {
             )}
           </section>
 
+          {/* Extraction */}
           <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="font-bold text-ink">Extraction</h2>
                 <p className="text-sm text-muted">Run extraction from the saved field selection.</p>
               </div>
-              <Button onClick={() => extractMutation.mutate()} disabled={!project.preview || extractMutation.isPending}>
+              <Button
+                onClick={() => extractMutation.mutate()}
+                disabled={
+                  !project.preview ||
+                  extractMutation.isPending ||
+                  scopeNeedsConfirmation
+                }
+                title={scopeNeedsConfirmation ? "Confirm the crawl scope before extracting" : undefined}
+              >
                 <Download className="h-4 w-4" />
                 {extractMutation.isPending ? "Extracting..." : "Extract"}
               </Button>
             </div>
-            {extractMutation.error ? <Alert tone="danger">{extractMutation.error.message}</Alert> : null}
-            <div className="mb-5 grid gap-4 md:grid-cols-[220px_220px_1fr]">
+
+            {extractScopeError ? (
+              <div className="mb-4">
+                <Alert tone="danger">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                    <div>
+                      <p className="font-semibold">{extractScopeError}</p>
+                      <p className="mt-1 text-sm">
+                        Confirm the crawl scope in the "Crawl scope" section above. Current mode:{" "}
+                        <strong>{scopeModeLabel(effectiveDraftMode)}</strong>.
+                      </p>
+                    </div>
+                  </div>
+                </Alert>
+              </div>
+            ) : null}
+
+            {extractMutation.error && !(extractMutation.error instanceof ApiError && extractMutation.error.status === 409) ? (
+              <div className="mb-4"><Alert tone="danger">{extractMutation.error.message}</Alert></div>
+            ) : null}
+
+            {scopeNeedsConfirmation ? (
+              <div className="mb-4">
+                <Alert tone="info">
+                  Confirm the crawl scope (<strong>{scopeModeLabel(effectiveDraftMode)}</strong>) before extraction can begin.
+                </Alert>
+              </div>
+            ) : null}
+
+            <div className="mb-5 grid gap-4 md:grid-cols-[220px_1fr]">
               <label className="grid gap-1 text-sm font-semibold text-ink">
-                Page limit
+                Safety limit
                 <Input
                   type="number"
                   min={1}
@@ -360,19 +564,14 @@ export function ProjectDetailPage() {
                   value={pageLimit}
                   onChange={(event) => setPageLimit(Number(event.target.value))}
                 />
-              </label>
-              <label className="grid gap-1 text-sm font-semibold text-ink">
-                Export format
-                <Select value={exportFormat} onChange={(event) => setExportFormat(event.target.value)}>
-                  <option value="csv">CSV</option>
-                  <option value="json">JSON</option>
-                  <option value="xlsx">XLSX</option>
-                </Select>
+                <span className="font-normal text-xs text-muted">Maximum pages to crawl</span>
               </label>
               <div className="rounded-lg border border-line bg-porcelain p-4 text-sm text-muted">
-                Extraction crawls same-site pages up to the page limit and skips pages blocked by robots.txt or URL safety checks.
+                ScrapGPT will crawl pages within the selected scope, up to the safety limit.
+                Scope is set in the "Crawl scope" section above.
               </div>
             </div>
+
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="rounded-lg border border-line bg-porcelain p-4">
                 <p className="text-xs font-bold uppercase tracking-widest text-muted">Pages</p>
@@ -406,41 +605,62 @@ export function ProjectDetailPage() {
             </div>
           </section>
 
+          {/* Extraction Quality */}
+          <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
+            <div className="mb-4">
+              <h2 className="font-bold text-ink">Extraction quality</h2>
+              <p className="text-sm text-muted">Trust signals for the extracted data.</p>
+            </div>
+            <TrustSummaryPanel quality={project.extraction_quality} />
+          </section>
+
+          {/* Results */}
           <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="font-bold text-ink">Results</h2>
                 <p className="text-sm text-muted">Extracted records from this project.</p>
               </div>
-              {records.length ? (
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="secondary" onClick={() => void api.exportProject(project.id, "csv")}>
+              {legacyRecords.length ? (
+                <div className="flex flex-wrap items-center gap-3">
+                  <label className="flex items-center gap-2 text-sm text-muted">
+                    Export:
+                    <Select
+                      value={exportFormat}
+                      onChange={(e) => setExportFormat(e.target.value)}
+                    >
+                      <option value="csv">CSV</option>
+                      <option value="json">JSON</option>
+                      <option value="xlsx">XLSX</option>
+                    </Select>
+                  </label>
+                  <Button
+                    variant="secondary"
+                    onClick={() => void api.exportProject(project.id, exportFormat as "csv" | "json" | "xlsx")}
+                  >
                     <Download className="h-4 w-4" />
-                    CSV
-                  </Button>
-                  <Button variant="secondary" onClick={() => void api.exportProject(project.id, "json")}>
-                    <Download className="h-4 w-4" />
-                    JSON
-                  </Button>
-                  <Button variant="secondary" onClick={() => void api.exportProject(project.id, "xlsx")}>
-                    <Download className="h-4 w-4" />
-                    XLSX
+                    Download
                   </Button>
                 </div>
               ) : null}
             </div>
-            <RecordsTable rows={records.map((record) => record.normalized_data ?? record.raw_data)} />
+            <PaginatedResultsTable
+              projectId={projectId}
+              specFields={project.spec?.fields}
+              isCompleted={isCompleted}
+            />
           </section>
 
+          {/* Developer Details */}
           <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
             <button
               type="button"
               className="text-sm font-bold text-muted transition hover:text-ink"
-              onClick={() => setShowAdvanced((value) => !value)}
+              onClick={() => setShowDeveloper((value) => !value)}
             >
-              {showAdvanced ? "Hide advanced" : "Show advanced"}
+              {showDeveloper ? "Hide developer details" : "Show developer details"}
             </button>
-            {showAdvanced ? (
+            {showDeveloper ? (
               <pre className="mt-4 overflow-x-auto rounded-lg border border-line bg-porcelain p-4 text-xs text-ink">
                 {JSON.stringify(
                   {
@@ -449,7 +669,8 @@ export function ProjectDetailPage() {
                     workflow_mode: project.workflow_mode,
                     fetch_metadata: project.fetch_metadata,
                     analysis: project.analysis,
-                    spec: project.spec
+                    spec: project.spec,
+                    frontier_preview: project.frontier_preview,
                   },
                   null,
                   2

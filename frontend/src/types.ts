@@ -215,6 +215,105 @@ export type FieldSpec = {
   warnings: string[];
 };
 
+// ---------------------------------------------------------------------------
+// Crawl Scope (Phase 2.5)
+// ---------------------------------------------------------------------------
+
+export type CrawlScopeMode = "CURRENT_PAGE" | "PAGINATION" | "DATASET" | "FULL_SITE";
+export type CrawlScopeStatus = "AI_SUGGESTED" | "USER_CONFIRMED" | "SYSTEM_DEFAULTED";
+
+export type CrawlScopePagination = {
+  selector: string | null;
+  url_pattern: string | null;
+  estimated_pages: number | null;
+};
+
+export type CrawlScopeLinkRule = {
+  role: string;
+  action: string;
+  selector: string | null;
+  pattern: string | null;
+  reason: string | null;
+  confidence: number | null;
+};
+
+export type CrawlScopeAiRecommendation = {
+  recommended_mode: CrawlScopeMode;
+  confidence: number;
+  warnings: string[];
+  evidence: string[];
+};
+
+export type CrawlScope = {
+  version: number;
+  mode: CrawlScopeMode;
+  status: CrawlScopeStatus;
+  seed_url: string | null;
+  max_pages: number;
+  max_depth: number | null;
+  include_patterns: string[];
+  exclude_patterns: string[];
+  pagination: CrawlScopePagination;
+  link_rules: CrawlScopeLinkRule[];
+  ai_recommendation: CrawlScopeAiRecommendation | null;
+  user_confirmed_at: string | null;
+};
+
+// ---------------------------------------------------------------------------
+// Frontier Preview (Phase 2.5)
+// ---------------------------------------------------------------------------
+
+export type FrontierUrlDecision = {
+  url: string;
+  normalized_url: string;
+  source_url: string | null;
+  depth: number;
+  decision: "included" | "excluded";
+  role: string | null;
+  reason_code: string;
+  reason: string;
+  confidence: number | null;
+  link_text: string | null;
+};
+
+export type FrontierPreviewResponse = {
+  id: number;
+  project_id: number;
+  spec_id: number;
+  scope_hash: string;
+  included_urls: FrontierUrlDecision[];
+  excluded_urls: FrontierUrlDecision[];
+  estimated_page_count: number | null;
+  warnings: Record<string, unknown>[];
+  quality_summary: Record<string, unknown>;
+  created_at: string | null;
+};
+
+// ---------------------------------------------------------------------------
+// Extraction Quality (Phase 2.5)
+// ---------------------------------------------------------------------------
+
+export type ExtractionQuality = {
+  overall: "good" | "needs_review" | "risky" | "unknown" | string;
+  field_success_rates: Record<string, number>;
+  missing_field_rates: Record<string, number>;
+  warnings: Record<string, unknown>[];
+};
+
+// ---------------------------------------------------------------------------
+// Records Pagination (Phase 2.5)
+// ---------------------------------------------------------------------------
+
+export type RecordPageResponse = {
+  items: ProjectRecord[];
+  total: number;
+  skip: number;
+  limit: number;
+  next_skip: number | null;
+  has_more: boolean;
+  columns: string[];
+};
+
 export type ExtractionSpecResponse = {
   id: number;
   project_id: number;
@@ -224,6 +323,8 @@ export type ExtractionSpecResponse = {
   url_patterns: Record<string, unknown>[];
   page_limit: number;
   export_format: "csv" | "json" | "xlsx" | string;
+  crawl_scope: CrawlScope | null;
+  quality_summary: Record<string, unknown> | null;
   created_at: string;
   updated_at: string | null;
 };
@@ -276,6 +377,8 @@ export type ProjectResponse = ProjectListItem & {
   fetch_metadata: Record<string, unknown> | null;
   spec: ExtractionSpecResponse | null;
   preview: PreviewResponse | null;
+  frontier_preview: FrontierPreviewResponse | null;
+  extraction_quality: ExtractionQuality | null;
   progress: ExtractionProgress;
   created_at: string;
   updated_at: string | null;

@@ -35,19 +35,25 @@ from app.models.user import User
 from app.schemas.project import (
     ExtractRequest,
     ExtractionProgress,
+    ExtractionQuality,
     ExtractionSpecResponse,
     ExtractionSpecUpdate,
+    FrontierPreviewResponse,
+    FrontierUrlDecision,
     PreviewResponse,
     ProjectAnalyzeRequest,
     ProjectListItem,
     ProjectResponse,
+    RecordPageResponse,
     RecordResponse,
 )
+from app.services.crawl_scope import ScopeConfirmationError
 from app.services.extraction_spec_service import ensure_default_spec, latest_spec, selected_field_count
+from app.services.frontierpreview import create_frontier_preview, latest_frontier_preview
 from app.services.job_admission import JobAdmissionError, JobAdmissionErrorType, admit_job
 from app.services.job_executor import execute_job_pipeline
 from app.services.job_state import transition_job_to_canceled
-from app.services.project_extraction import execute_project_extraction, list_records, start_project_extraction
+from app.services.project_extraction import count_records, execute_project_extraction, list_records, start_project_extraction
 from app.services.project_preview import create_preview, latest_preview
 from app.services.project_status import confidence_label, detected_type, product_status_for
 
@@ -94,8 +100,27 @@ def _spec_response(spec: ExtractionSpec | None) -> ExtractionSpecResponse | None
         url_patterns=spec.url_patterns or [],
         page_limit=spec.page_limit,
         export_format=spec.export_format,
+        crawl_scope=spec.crawl_scope,
+        quality_summary=spec.quality_summary,
         created_at=spec.created_at,
         updated_at=spec.updated_at,
+    )
+
+
+def _frontier_preview_response(preview) -> FrontierPreviewResponse | None:
+    if preview is None:
+        return None
+    return FrontierPreviewResponse(
+        id=preview.id,
+        project_id=preview.project_id,
+        spec_id=preview.spec_id,
+        scope_hash=preview.scope_hash,
+        included_urls=[FrontierUrlDecision(**d) for d in (preview.included_urls or [])],
+        excluded_urls=[FrontierUrlDecision(**d) for d in (preview.excluded_urls or [])],
+        estimated_page_count=preview.estimated_page_count,
+        warnings=preview.warnings or [],
+        quality_summary=preview.quality_summary or {},
+        created_at=preview.created_at,
     )
 
 
@@ -114,9 +139,22 @@ def _preview_response(preview) -> PreviewResponse | None:
     )
 
 
+def _extraction_quality(spec: ExtractionSpec | None) -> ExtractionQuality | None:
+    if spec is None or not spec.quality_summary:
+        return None
+    qs = spec.quality_summary
+    return ExtractionQuality(
+        overall=qs.get("overall", "unknown"),
+        field_success_rates=qs.get("field_success_rates", {}),
+        missing_field_rates=qs.get("missing_field_rates", {}),
+        warnings=qs.get("warnings", []),
+    )
+
+
 async def _project_response(db: AsyncSession, project: Project) -> ProjectResponse:
     spec = await ensure_default_spec(db, project)
     preview = await latest_preview(db, project.id)
+    frontier_preview = await latest_frontier_preview(db, project.id)
     status_info = product_status_for(project)
     last_activity = project.updated_at or project.created_at
     return ProjectResponse(
@@ -139,6 +177,8 @@ async def _project_response(db: AsyncSession, project: Project) -> ProjectRespon
         fetch_metadata=project.fetch_metadata,
         spec=_spec_response(spec),
         preview=_preview_response(preview),
+        frontier_preview=_frontier_preview_response(frontier_preview),
+        extraction_quality=_extraction_quality(spec),
         progress=await _progress(db, project.id),
         last_activity=last_activity,
         error=project.error,
@@ -288,6 +328,8 @@ async def update_project_spec(
         spec.page_limit = payload.page_limit
     if payload.export_format is not None:
         spec.export_format = payload.export_format
+    if payload.crawl_scope is not None:
+        spec.crawl_scope = payload.crawl_scope.model_dump(mode="json")
 
     await db.commit()
     await db.refresh(spec)
@@ -323,6 +365,57 @@ async def preview_project(
     return _preview_response(preview)  # type: ignore[return-value]
 
 
+@router.post(
+    "/{project_id}/frontier-preview",
+    response_model=FrontierPreviewResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Generate crawl frontier preview",
+)
+async def create_frontier_preview_endpoint(
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> FrontierPreviewResponse:
+    project = await _owned_project(db, user, project_id)
+    if project.state not in {
+        ProjectState.AWAITING_SETUP,
+        ProjectState.ANALYSIS_READY,
+        ProjectState.PREVIEW_READY,
+        ProjectState.COMPLETED,
+    }:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Project is not ready for frontier preview")
+    try:
+        preview = await create_frontier_preview(db, project)
+    except Exception as exc:
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if preview is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Could not generate frontier preview: no spec or seed URL available",
+        )
+    await db.commit()
+    await db.refresh(preview)
+    return _frontier_preview_response(preview)  # type: ignore[return-value]
+
+
+@router.get(
+    "/{project_id}/frontier-preview",
+    response_model=FrontierPreviewResponse,
+    summary="Get latest crawl frontier preview",
+)
+async def get_frontier_preview(
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> FrontierPreviewResponse:
+    await _owned_project(db, user, project_id)
+    preview = await latest_frontier_preview(db, project_id)
+    if preview is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No frontier preview found")
+    return _frontier_preview_response(preview)  # type: ignore[return-value]
+
+
 @router.post("/{project_id}/extract", response_model=ProjectResponse, summary="Extract records")
 async def extract_project(
     project_id: int,
@@ -347,7 +440,13 @@ async def extract_project(
     }:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Project is not ready for extraction")
 
-    await start_project_extraction(db, project, spec)
+    try:
+        await start_project_extraction(db, project, spec)
+    except ScopeConfirmationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"message": str(exc), "error_code": exc.code, "scope": exc.scope},
+        )
     await db.commit()
     await db.refresh(project)
     background_tasks.add_task(execute_project_extraction, project.id, spec.id)
@@ -375,6 +474,50 @@ async def get_project_records(
         )
         for record in records
     ]
+
+
+@router.get(
+    "/{project_id}/records-page",
+    response_model=RecordPageResponse,
+    summary="Paginated extracted records",
+)
+async def get_project_records_page(
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> RecordPageResponse:
+    await _owned_project(db, user, project_id)
+    total = await count_records(db, project_id)
+    records = await list_records(db, project_id, skip, limit)
+    items = [
+        RecordResponse(
+            id=record.id,
+            source_url=record.source_url,
+            raw_data=record.raw_data,
+            normalized_data=record.normalized_data,
+            warnings=record.warnings or [],
+            created_at=record.created_at,
+        )
+        for record in records
+    ]
+    columns: list[str] = sorted({
+        key
+        for record in records
+        for key in (record.normalized_data or record.raw_data or {}).keys()
+    })
+    has_more = (skip + limit) < total
+    next_skip = skip + limit if has_more else None
+    return RecordPageResponse(
+        items=items,
+        total=total,
+        skip=skip,
+        limit=limit,
+        next_skip=next_skip,
+        has_more=has_more,
+        columns=columns,
+    )
 
 
 @router.get("/{project_id}/export", summary="Export generated results")

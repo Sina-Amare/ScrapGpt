@@ -420,3 +420,10 @@ async def list_records(
         .limit(limit)
     )
     return list(result.scalars().all())
+
+
+async def count_records(db: AsyncSession, project_id: int) -> int:
+    result = await db.scalar(
+        select(func.count(ExtractedRecord.id)).where(ExtractedRecord.project_id == project_id)
+    )
+    return int(result or 0)

@@ -1,8 +1,10 @@
 import {
   AuthResponse,
-  HealthResponse,
+  CrawlScope,
   ExtractionSpecResponse,
   FieldSpec,
+  FrontierPreviewResponse,
+  HealthResponse,
   JobCreateInput,
   JobListItem,
   JobResponse,
@@ -16,6 +18,7 @@ import {
   ProviderKeyResponse,
   ProviderTestResponse,
   ProviderUpdateInput,
+  RecordPageResponse,
   TaskResponse,
   TokenResponse
 } from "../types";
@@ -327,6 +330,7 @@ export const api = {
       url_patterns?: Record<string, unknown>[];
       page_limit?: number;
       export_format?: string;
+      crawl_scope?: Partial<CrawlScope>;
     }
   ): Promise<ExtractionSpecResponse> {
     return apiRequest<ExtractionSpecResponse>(`/projects/${id}/spec`, {
@@ -334,6 +338,25 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input)
     });
+  },
+
+  createFrontierPreview(id: number): Promise<FrontierPreviewResponse> {
+    return apiRequest<FrontierPreviewResponse>(`/projects/${id}/frontier-preview`, {
+      method: "POST"
+    });
+  },
+
+  getFrontierPreview(id: number): Promise<FrontierPreviewResponse> {
+    return apiRequest<FrontierPreviewResponse>(`/projects/${id}/frontier-preview`);
+  },
+
+  getProjectRecordsPage(
+    id: number,
+    { skip = 0, limit = 100 }: { skip?: number; limit?: number }
+  ): Promise<RecordPageResponse> {
+    return apiRequest<RecordPageResponse>(
+      `/projects/${id}/records-page?skip=${skip}&limit=${limit}`
+    );
   },
 
   previewProject(id: number): Promise<ProjectResponse["preview"]> {

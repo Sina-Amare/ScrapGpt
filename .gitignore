@@ -105,6 +105,7 @@ coverage.xml
 *.cover
 *.py,cover
 .hypothesis/
+tests/validation/results.json
 
 # ===========================
 # Node / Frontend
@@ -217,4 +218,3 @@ uploads/
 *.spec
 celerybeat-schedule
 celerybeat.pid
-

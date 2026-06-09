@@ -2,7 +2,7 @@
 
 > **Last updated:** Round 2 review incorporated. See `docs/reviews/` history in git if you need the reasoning behind specific decisions.
 >
-> **Implementation status as of June 8, 2026:** Phase 0, Phase 0.5, frontend v0, Phase 1 analysis jobs, the Project workflow (Analyze → Field Selection → Preview → Extract → Results), and Phase 2 real extraction are implemented on the active project workflow branch. `/jobs` remains as a compatibility API over project rows. This document remains the forward-looking roadmap for quality/template intelligence, visual interaction, durable worker recovery, advanced exports, and authenticated-content phases. For the current runnable surface, see `docs/STATUS.md`.
+> **Implementation status as of June 9, 2026:** Phase 0, Phase 0.5, frontend v0, Phase 1 analysis jobs, the Project workflow (Analyze → Field Selection → Preview → Extract → Results), Phase 2 real extraction, and Phase 2.5 crawl scope/frontier preview/trust signals are implemented on the active project workflow branch. `/jobs` remains as a compatibility API over project rows. This document remains the forward-looking roadmap for template intelligence, visual interaction, durable worker recovery, advanced exports, and authenticated-content phases. For the current runnable surface, see `docs/STATUS.md`.
 >
 > **Current Phase 2 state:** `build_dom_summary()` now includes repeated container HTML samples, table samples, `data-*` attributes, up to 15 repeated classes, and a 10,000-character cap. Preview and extraction now execute selectors against real fetched HTML. Remaining quality work is template detection, selector repair, visual selection, and durable multi-worker recovery.
 

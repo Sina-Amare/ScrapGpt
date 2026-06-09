@@ -29,8 +29,8 @@ function admissionError(error: unknown): string {
 
 export function NewProjectPage() {
   const [url, setUrl] = useState("");
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [extractionMode, setExtractionMode] = useState<ExtractionMode>("STRUCTURED");
+  const [connectionOpen, setConnectionOpen] = useState(false);
+  const [extractionMode, setExtractionMode] = useState<ExtractionMode | "">("");
   const [renderMode, setRenderMode] = useState<RenderMode>("AUTO");
   const [providerConfigId, setProviderConfigId] = useState("");
   const [project, setProject] = useState<ProjectResponse | null>(null);
@@ -45,14 +45,12 @@ export function NewProjectPage() {
     mutationFn: () =>
       api.analyzeProject({
         url,
-        advanced: advancedOpen
-          ? {
-              extraction_mode: extractionMode,
-              workflow_mode: "GUIDED",
-              render_mode: renderMode,
-              provider_config_id: providerConfigId ? Number(providerConfigId) : null
-            }
-          : undefined
+        advanced: {
+          extraction_mode: extractionMode ? extractionMode : undefined,
+          workflow_mode: "GUIDED",
+          render_mode: renderMode !== "AUTO" ? renderMode : undefined,
+          provider_config_id: providerConfigId ? Number(providerConfigId) : null
+        }
       }),
     onSuccess: (response) => {
       setProject(response);
@@ -121,28 +119,32 @@ export function NewProjectPage() {
               />
             </Field>
 
+            <Field label="What are you extracting?" hint="Leave blank and ScrapGPT will decide.">
+              <Select
+                value={extractionMode}
+                onChange={(event) => setExtractionMode(event.target.value as ExtractionMode | "")}
+              >
+                <option value="">Let ScrapGPT decide</option>
+                <option value="STRUCTURED">Structured data - products, listings, directories, tables</option>
+                <option value="CONTENT">Content - articles, docs, knowledge pages</option>
+              </Select>
+            </Field>
+
             <button
               type="button"
               className="flex h-10 items-center justify-between rounded-md border border-line px-3 text-sm font-semibold text-muted transition hover:bg-porcelain hover:text-ink"
-              onClick={() => setAdvancedOpen((value) => !value)}
+              onClick={() => setConnectionOpen((value) => !value)}
             >
-              <span>Advanced settings</span>
-              {advancedOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              <span>Connection and rendering</span>
+              {connectionOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </button>
 
-            {advancedOpen ? (
+            {connectionOpen ? (
               <div className="grid gap-4 rounded-lg border border-line bg-porcelain p-4">
-                <Field label="Data type">
-                  <Select
-                    value={extractionMode}
-                    onChange={(event) => setExtractionMode(event.target.value as ExtractionMode)}
-                  >
-                    <option value="STRUCTURED">Structured data</option>
-                    <option value="CONTENT">Content / knowledge base</option>
-                  </Select>
-                </Field>
-
-                <Field label="Page rendering">
+                <Field
+                  label="Page rendering"
+                  hint="Use browser rendering if the page is empty or heavily interactive."
+                >
                   <Select
                     value={renderMode}
                     onChange={(event) => setRenderMode(event.target.value as RenderMode)}
@@ -214,7 +216,7 @@ export function NewProjectPage() {
               current.product_status === "preview_ready" ||
               current.product_status === "completed" ? (
                 <Link className="text-sm font-bold text-teal hover:text-teal-dark" to={`/projects/${current.id}`}>
-                  Continue to field selection →
+                  Continue to field selection -&gt;
                 </Link>
               ) : (
                 <div className="rounded-lg border border-line bg-porcelain p-5 text-sm text-muted">

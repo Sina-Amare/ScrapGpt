@@ -12,6 +12,7 @@ Read these in order to understand what exists now and how it was built:
 6. [learning/07_frontend_robustness_and_polish.md](learning/07_frontend_robustness_and_polish.md) — final Phase 1 UX polish and browser error handling.
 7. [learning/08_project_workflow_migration.md](learning/08_project_workflow_migration.md) — Project workflow migration: Analyze → Fields → Preview → Extract → Results.
 8. [learning/09_phase2_real_extraction_engine.md](learning/09_phase2_real_extraction_engine.md) — real selector preview, same-site crawling, persisted records, and CSV/JSON/XLSX export.
+9. [learning/10_phase25_scope_frontier_trust.md](learning/10_phase25_scope_frontier_trust.md) — crawl scope, frontier preview, scope confirmation, trust signals, paginated results, and validation.
 
 Use the remaining learning docs when you need detail about the older legacy scrape pipeline or security fixes.
 
@@ -37,6 +38,13 @@ Added after every non-trivial implementation task. Explain the *why*, not just t
 - [learning/07_frontend_robustness_and_polish.md](learning/07_frontend_robustness_and_polish.md) — Why: layout robustness, honest analysis-state copy, legacy nav demotion, browser error quality.
 - [learning/08_project_workflow_migration.md](learning/08_project_workflow_migration.md) — Why: migrate from jobs to projects and preserve compatibility while adding spec/preview/results contracts.
 - [learning/09_phase2_real_extraction_engine.md](learning/09_phase2_real_extraction_engine.md) — Why: replace seed/sample extraction with deterministic selector execution and bounded same-site crawling.
+- [learning/10_phase25_scope_frontier_trust.md](learning/10_phase25_scope_frontier_trust.md) — Why: add explicit crawl intent, preview what will be crawled, block unconfirmed broad crawls, and expose extraction quality.
+
+## Reviews & Validation
+
+- [reviews/01_codebase_audit.md](reviews/01_codebase_audit.md) — Code-first project audit before Phase 2.5.
+- [reviews/02_product_ux_strategy.md](reviews/02_product_ux_strategy.md) — Product UX and architecture strategy review.
+- [reviews/03_phase25_validation.md](reviews/03_phase25_validation.md) — Post-Step-4 validation report with 8/8 E2E scenarios passing.
 
 ## Operations
 
