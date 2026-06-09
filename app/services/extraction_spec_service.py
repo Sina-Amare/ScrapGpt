@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.job import ExtractionMode, ExtractionSpec, Project
+from app.services.crawl_scope import default_crawl_scope
+
 
 
 def default_spec_from_analysis(project: Project) -> dict[str, Any]:
@@ -64,7 +66,9 @@ def default_spec_from_analysis(project: Project) -> dict[str, Any]:
         "url_patterns": [],
         "page_limit": settings.MAX_PAGES_PER_JOB,
         "export_format": "csv",
+        "crawl_scope": default_crawl_scope(project, analysis),
     }
+
 
 
 async def latest_spec(db: AsyncSession, project_id: int) -> ExtractionSpec | None:

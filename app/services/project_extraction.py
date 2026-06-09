@@ -24,11 +24,22 @@ from app.models.job import (
     Project,
     ProjectState,
 )
+from app.services.crawl_scope import (
+    CrawlScopeMode,
+    discover_links_for_scope,
+    scope_max_pages,
+    scope_requires_confirmation,
+)
 from app.services.extractor import extract_records_from_html
 from app.services.fetcher import FetchError, fetch_url
 from app.services.robots_service import RobotsResult, check_robots
 from app.services.url_normalizer import discover_same_site_links, normalize_url
 from app.services.url_validator import URLValidationError, validate_url
+from app.services.extraction_quality import (
+    compute_extraction_quality,
+    WARN_SCOPE_NOT_CONFIRMED,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +162,20 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
 
             processed_pages = 0
             total_records = 0
+            scope = spec.crawl_scope or {}
+            scope_mode = scope.get("mode") if scope else None
+            scope_confirmed = (
+                not scope_requires_confirmation(scope) if scope else True
+            )
             page_limit = min(spec.page_limit, settings.MAX_PAGES_PER_JOB)
+            if isinstance(scope, dict) and scope_mode:
+                try:
+                    scope_max = scope_max_pages(scope)
+                    if scope_max < page_limit:
+                        page_limit = scope_max
+                except Exception:
+                    pass
+
 
             while processed_pages < page_limit:
                 if await _project_was_canceled(db, project_id):
@@ -190,13 +214,26 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
 
                     current_count = await _crawl_page_count(db, project_id)
                     remaining = max(0, page_limit - current_count)
-                    links = discover_same_site_links(
-                        fetched.html,
-                        page_url=fetched.final_url,
-                        root_url=validated_seed,
-                        patterns=spec.url_patterns or [],
-                        limit=remaining,
-                    )
+                    if isinstance(scope, dict) and scope_mode:
+                        links = discover_links_for_scope(
+                            fetched.html,
+                            page_url=fetched.final_url,
+                            root_url=validated_seed,
+                            scope=scope,
+                            analysis=project.analysis if isinstance(project.analysis, dict) else None,
+                            limit=remaining,
+                        )
+                    else:
+                        links = discover_same_site_links(
+                            fetched.html,
+                            page_url=fetched.final_url,
+                            root_url=validated_seed,
+                            patterns=spec.url_patterns or [],
+                            limit=remaining,
+                        )
+                    if scope_mode == CrawlScopeMode.CURRENT_PAGE.value:
+                        links = []
+
                     await _insert_discovered_pages(
                         db,
                         project_id=project_id,
@@ -250,6 +287,36 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
             else:
                 project.state = ProjectState.EXPORTING
 
+            # Persist extraction quality summary on the spec so the
+            # frontend can render the trust panel without re-computing.
+            try:
+                records = (
+                    await db.execute(
+                        select(ExtractedRecord).where(
+                            ExtractedRecord.project_id == project_id
+                        )
+                    )
+                ).scalars().all()
+                pages_total = processed_pages
+                pages_failed = sum(
+                    1
+                    for page_row in (
+                        await db.execute(
+                            select(CrawlPage).where(CrawlPage.project_id == project_id)
+                        )
+                    ).scalars()
+                    if page_row.state == CrawlPageState.FAILED
+                )
+                spec.quality_summary = compute_extraction_quality(
+                    records,
+                    spec,
+                    pages_attempted=pages_total,
+                    pages_failed=pages_failed,
+                )
+            except Exception:
+                # Quality is best-effort; never block extraction completion.
+                spec.quality_summary = {}
+
             db.add(
                 Export(
                     project_id=project.id,
@@ -260,6 +327,7 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
             )
             project.transition_to(ProjectState.COMPLETED)
             await db.commit()
+
             logger.info(
                 "project_extraction.completed",
                 extra={"project_id": project_id, "records": total_records, "pages": processed_pages},

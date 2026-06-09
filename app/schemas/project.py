@@ -56,12 +56,114 @@ class FieldSpec(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+VALID_CRAWL_SCOPE_MODES = ("CURRENT_PAGE", "PAGINATION", "DATASET", "FULL_SITE")
+VALID_CRAWL_SCOPE_STATUSES = ("AI_SUGGESTED", "USER_CONFIRMED", "SYSTEM_DEFAULTED")
+
+
+class CrawlScopeLinkRule(BaseModel):
+    role: str
+    action: str
+    selector: str | None = None
+    pattern: str | None = None
+    reason: str | None = None
+    confidence: float | None = None
+
+
+class CrawlScopePagination(BaseModel):
+    selector: str | None = None
+    url_pattern: str | None = None
+    estimated_pages: int | None = None
+
+
+class CrawlScopeAiRecommendation(BaseModel):
+    recommended_mode: str
+    confidence: float
+    warnings: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+
+
+class CrawlScope(BaseModel):
+    version: int = 1
+    mode: str
+    status: str
+    seed_url: str | None = None
+    max_pages: int = 500
+    max_depth: int | None = None
+    include_patterns: list[str] = Field(default_factory=list)
+    exclude_patterns: list[str] = Field(default_factory=list)
+    pagination: CrawlScopePagination = Field(default_factory=CrawlScopePagination)
+    link_rules: list[CrawlScopeLinkRule] = Field(default_factory=list)
+    ai_recommendation: CrawlScopeAiRecommendation | None = None
+    user_confirmed_at: datetime | None = None
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, value: str) -> str:
+        if value not in VALID_CRAWL_SCOPE_MODES:
+            raise ValueError(
+                f"crawl_scope.mode must be one of {VALID_CRAWL_SCOPE_MODES}"
+            )
+        return value
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        if value not in VALID_CRAWL_SCOPE_STATUSES:
+            raise ValueError(
+                f"crawl_scope.status must be one of {VALID_CRAWL_SCOPE_STATUSES}"
+            )
+        return value
+
+    @field_validator("max_pages")
+    @classmethod
+    def validate_max_pages(cls, value: int) -> int:
+        if value < 1 or value > 5000:
+            raise ValueError("crawl_scope.max_pages must be between 1 and 5000")
+        return value
+
+
+class FrontierUrlDecision(BaseModel):
+    url: str
+    normalized_url: str
+    source_url: str | None = None
+    depth: int = 0
+    decision: str  # "included" | "excluded"
+    role: str | None = None
+    reason_code: str
+    reason: str
+    confidence: float | None = None
+    link_text: str | None = None
+
+
+class FrontierPreviewResponse(BaseModel):
+    id: int
+    project_id: int
+    spec_id: int
+    scope_hash: str
+    included_urls: list[FrontierUrlDecision]
+    excluded_urls: list[FrontierUrlDecision]
+    estimated_page_count: int | None = None
+    warnings: list[Any] = Field(default_factory=list)
+    quality_summary: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+class FrontierPreviewSummary(BaseModel):
+    id: int
+    project_id: int
+    spec_id: int
+    scope_hash: str
+    estimated_page_count: int | None = None
+    created_at: datetime | None = None
+
+
 class ExtractionSpecUpdate(BaseModel):
     fields: list[FieldSpec] | None = None
     content_config: dict[str, Any] | None = None
     url_patterns: list[dict[str, Any]] | None = None
     page_limit: int | None = Field(default=None, ge=1, le=5000)
     export_format: str | None = None
+    crawl_scope: CrawlScope | None = None
 
     @field_validator("export_format")
     @classmethod
@@ -69,6 +171,7 @@ class ExtractionSpecUpdate(BaseModel):
         if value is not None and value not in ("csv", "json", "xlsx"):
             raise ValueError("export_format must be csv, json, or xlsx")
         return value
+
 
 
 class ExtractionSpecResponse(BaseModel):
@@ -80,8 +183,11 @@ class ExtractionSpecResponse(BaseModel):
     url_patterns: list[dict[str, Any]]
     page_limit: int
     export_format: str
+    crawl_scope: dict[str, Any] | None = None
+    quality_summary: dict[str, Any] | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
 
 
 class PreviewResponse(BaseModel):
@@ -123,6 +229,13 @@ class ProjectListItem(BaseModel):
     error_code: str | None = None
 
 
+class ExtractionQuality(BaseModel):
+    overall: str = "unknown"  # "good" | "needs_review" | "risky" | "unknown"
+    field_success_rates: dict[str, float] = Field(default_factory=dict)
+    missing_field_rates: dict[str, float] = Field(default_factory=dict)
+    warnings: list[Any] = Field(default_factory=list)
+
+
 class ProjectResponse(ProjectListItem):
     workflow_mode: str
     render_mode: str
@@ -132,9 +245,22 @@ class ProjectResponse(ProjectListItem):
     fetch_metadata: dict[str, Any] | None = None
     spec: ExtractionSpecResponse | None = None
     preview: PreviewResponse | None = None
+    frontier_preview: FrontierPreviewResponse | None = None
+    extraction_quality: ExtractionQuality | None = None
     progress: ExtractionProgress = Field(default_factory=ExtractionProgress)
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class RecordPageResponse(BaseModel):
+    items: list[RecordResponse]
+    total: int
+    skip: int
+    limit: int
+    next_skip: int | None = None
+    has_more: bool
+    columns: list[str] = Field(default_factory=list)
+
 
 
 class ExtractRequest(BaseModel):

@@ -56,6 +56,52 @@ class CrawlPageState(str, enum.Enum):
     FAILED = "FAILED"
 
 
+class CrawlScopeMode(str, enum.Enum):
+    CURRENT_PAGE = "CURRENT_PAGE"
+    PAGINATION = "PAGINATION"
+    DATASET = "DATASET"
+    FULL_SITE = "FULL_SITE"
+
+
+class CrawlScopeStatus(str, enum.Enum):
+    AI_SUGGESTED = "AI_SUGGESTED"
+    USER_CONFIRMED = "USER_CONFIRMED"
+    SYSTEM_DEFAULTED = "SYSTEM_DEFAULTED"
+
+
+CRAWL_SCOPE_VERSION = 1
+DEFAULT_CRAWL_SCOPE: dict[str, Any] = {
+    "version": CRAWL_SCOPE_VERSION,
+    "mode": CrawlScopeMode.CURRENT_PAGE.value,
+    "status": CrawlScopeStatus.SYSTEM_DEFAULTED.value,
+    "seed_url": None,
+    "max_pages": 500,
+    "max_depth": 0,
+    "include_patterns": [],
+    "exclude_patterns": [],
+    "pagination": {},
+    "link_rules": [],
+    "ai_recommendation": None,
+    "user_confirmed_at": None,
+}
+
+LEGACY_COMPAT_CRAWL_SCOPE: dict[str, Any] = {
+    "version": CRAWL_SCOPE_VERSION,
+    "mode": CrawlScopeMode.FULL_SITE.value,
+    "status": CrawlScopeStatus.SYSTEM_DEFAULTED.value,
+    "seed_url": None,
+    "max_pages": 500,
+    "max_depth": None,
+    "include_patterns": [],
+    "exclude_patterns": [],
+    "pagination": {},
+    "link_rules": [],
+    "ai_recommendation": None,
+    "user_confirmed_at": None,
+}
+
+
+
 VALID_PROJECT_TRANSITIONS: dict[ProjectState, list[ProjectState]] = {
     ProjectState.QUEUED: [ProjectState.ANALYZING, ProjectState.FAILED, ProjectState.CANCELED],
     ProjectState.ANALYZING: [
@@ -282,6 +328,9 @@ class ExtractionSpec(Base):
     url_patterns: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, server_default="'[]'::jsonb")
     page_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=500, server_default="500")
     export_format: Mapped[str] = mapped_column(String(16), nullable=False, default="csv", server_default="csv")
+    crawl_scope: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    quality_summary: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -406,7 +455,35 @@ class Export(Base):
     project = relationship("Project", back_populates="exports")
 
 
+class FrontierPreview(Base):
+    __tablename__ = "frontier_previews"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    spec_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("extraction_specs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    scope_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    included_urls: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, server_default="'[]'::jsonb")
+    excluded_urls: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, server_default="'[]'::jsonb")
+    estimated_page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    warnings: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, server_default="'[]'::jsonb")
+    quality_summary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="'{}'::jsonb")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    project = relationship("Project", backref="frontier_previews")
+    spec = relationship("ExtractionSpec")
+
+
 class AnalysisCache(Base):
+
     __tablename__ = "analysis_cache"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
