@@ -145,6 +145,78 @@ def scope_requires_confirmation(scope: dict[str, Any] | None) -> bool:
     return True
 
 
+class ScopeConfirmationError(ValueError):
+    """Raised when extraction is attempted on a non-CURRENT_PAGE scope
+    that has not been confirmed by the user (status != USER_CONFIRMED).
+
+    The intended product behavior, per Phase 2.5 plan:
+
+      * CURRENT_PAGE: no confirmation required. Extraction is always safe
+        because it does not enqueue any discovered links.
+      * PAGINATION / DATASET / FULL_SITE with status USER_CONFIRMED:
+        extraction proceeds as the user has explicitly opted in.
+      * PAGINATION / DATASET / FULL_SITE with status AI_SUGGESTED or
+        SYSTEM_DEFAULTED: extraction MUST be rejected with this error
+        unless the caller passes ``allow_unconfirmed=True`` (used only
+        by explicit legacy-compat paths marked in code).
+
+    The error is raised from the synchronous ``start_project_extraction``
+    seam so the API can translate it into HTTP 409, and defensively from
+    the background ``execute_project_extraction`` so a forgotten
+    confirmation cannot silently broad-crawl.
+    """
+
+    def __init__(self, scope: dict[str, Any] | None, *, code: str = "SCOPE_NOT_CONFIRMED") -> None:
+        self.scope = scope or {}
+        self.code = code
+        mode = self.scope.get("mode") or "UNKNOWN"
+        status = self.scope.get("status") or "UNKNOWN"
+        super().__init__(
+            f"Crawl scope '{mode}' (status={status}) requires user confirmation "
+            f"before extraction. Confirm the scope, pass allow_unconfirmed=True "
+            f"for legacy compatibility, or use CURRENT_PAGE for the seed only."
+        )
+
+
+def assert_scope_confirmed(
+    scope: dict[str, Any] | None,
+    *,
+    allow_unconfirmed: bool = False,
+    allow_legacy_missing: bool = True,
+) -> None:
+    """Enforce the scope confirmation policy.
+
+    Raises ``ScopeConfirmationError`` when the scope needs confirmation
+    and either ``allow_unconfirmed`` is False or the scope is missing
+    (and ``allow_legacy_missing`` is False).
+
+    The policy is:
+
+    * ``scope is None`` or empty dict: treated as legacy. Falls through
+      if ``allow_legacy_missing`` is True. This preserves current
+      behavior for projects that predate the scope field.
+    * ``mode == CURRENT_PAGE``: always passes.
+    * ``status == USER_CONFIRMED``: always passes.
+    * Otherwise: requires ``allow_unconfirmed=True``.
+    """
+    if not scope:
+        if allow_legacy_missing:
+            return
+        raise ScopeConfirmationError(
+            scope,
+            code="SCOPE_MISSING",
+        )
+    mode = scope.get("mode")
+    status = scope.get("status")
+    if mode == CrawlScopeMode.CURRENT_PAGE.value:
+        return
+    if status == "USER_CONFIRMED":
+        return
+    if allow_unconfirmed:
+        return
+    raise ScopeConfirmationError(scope)
+
+
 def scope_max_pages(scope: dict[str, Any] | None) -> int:
     if not scope:
         return 500

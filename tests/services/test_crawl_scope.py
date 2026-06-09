@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from app.models.job import (
     CRAWL_SCOPE_VERSION,
     CrawlScopeMode,
@@ -265,3 +267,58 @@ def test_discover_links_for_scope_caps_at_limit():
     s = {"mode": "PAGINATION", "status": "USER_CONFIRMED"}
     urls = discover_links_for_scope(html, page_url="https://example.com", root_url="https://example.com", scope=s, limit=10)
     assert len(urls) == 10
+
+
+# ---- scope confirmation enforcement (block 1) ----
+
+from app.services.crawl_scope import (  # noqa: E402
+    ScopeConfirmationError,
+    assert_scope_confirmed,
+)
+
+
+def test_assert_scope_confirmed_passes_for_current_page():
+    assert_scope_confirmed({"mode": "CURRENT_PAGE", "status": "AI_SUGGESTED"})
+
+
+def test_assert_scope_confirmed_passes_for_user_confirmed_pagination():
+    assert_scope_confirmed({"mode": "PAGINATION", "status": "USER_CONFIRMED"})
+
+
+def test_assert_scope_confirmed_passes_for_user_confirmed_full_site():
+    assert_scope_confirmed({"mode": "FULL_SITE", "status": "USER_CONFIRMED"})
+
+
+def test_assert_scope_confirmed_rejects_unconfirmed_pagination():
+    with pytest.raises(ScopeConfirmationError) as exc:
+        assert_scope_confirmed({"mode": "PAGINATION", "status": "AI_SUGGESTED"})
+    assert exc.value.code == "SCOPE_NOT_CONFIRMED"
+    assert "PAGINATION" in str(exc.value)
+
+
+def test_assert_scope_confirmed_rejects_unconfirmed_full_site():
+    with pytest.raises(ScopeConfirmationError) as exc:
+        assert_scope_confirmed({"mode": "FULL_SITE", "status": "SYSTEM_DEFAULTED"})
+    assert exc.value.code == "SCOPE_NOT_CONFIRMED"
+
+
+def test_assert_scope_confirmed_rejects_unconfirmed_dataset():
+    with pytest.raises(ScopeConfirmationError):
+        assert_scope_confirmed({"mode": "DATASET", "status": "AI_SUGGESTED"})
+
+
+def test_assert_scope_confirmed_legacy_missing_passes_by_default():
+    assert_scope_confirmed(None)
+
+
+def test_assert_scope_confirmed_legacy_missing_rejected_when_disallowed():
+    with pytest.raises(ScopeConfirmationError) as exc:
+        assert_scope_confirmed(None, allow_legacy_missing=False)
+    assert exc.value.code == "SCOPE_MISSING"
+
+
+def test_assert_scope_confirmed_allow_unconfirmed_short_circuits():
+    assert_scope_confirmed(
+        {"mode": "PAGINATION", "status": "AI_SUGGESTED"},
+        allow_unconfirmed=True,
+    )

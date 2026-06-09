@@ -70,12 +70,16 @@ def upgrade() -> None:
     )
 
     # Backfill existing rows with the legacy-compatibility scope.
+    # The JSON literal is inlined because the Alembic sync wrapper
+    # signature is ``op.execute(sqltext, execution_options)``; a bind
+    # param dict is not accepted as a second positional arg in this
+    # version of SQLAlchemy.
     op.execute(
         sa.text(
-            "UPDATE extraction_specs SET crawl_scope = CAST(:crawl_scope AS jsonb) "
+            "UPDATE extraction_specs "
+            "SET crawl_scope = CAST('" + json.dumps(LEGACY_COMPAT_CRAWL_SCOPE) + "' AS jsonb) "
             "WHERE crawl_scope IS NULL"
-        ),
-        {"crawl_scope": json.dumps(LEGACY_COMPAT_CRAWL_SCOPE)},
+        )
     )
 
     # FrontierPreview table.

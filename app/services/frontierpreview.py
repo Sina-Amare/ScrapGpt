@@ -11,6 +11,27 @@ LLM-assisted link classification are deferred.
 The preview row counts are stored as small samples (default 100 each)
 so the row never grows unbounded. The estimated page count is the
 ``spec.crawl_scope.max_pages`` clamped to ``MAX_PAGES_PER_JOB``.
+
+Persistence design
+------------------
+
+There are exactly two entry points and they are not interchangeable:
+
+* :func:`build_frontier_preview` returns a fully-populated
+  ``FrontierPreview`` SQLAlchemy object that is **not** attached to any
+  session. Use this in tests, in dry-runs, or anywhere you need the
+  preview payload without committing. Callers must NOT add this to a
+  session themselves unless they really mean to; the public
+  ``create_frontier_preview`` already does the persistence.
+
+* :func:`create_frontier_preview` calls ``build_frontier_preview`` and
+  then ``db.add(row)``, ``await db.flush()``, ``await db.refresh(row)``
+  so the returned object is a real, persisted, queryable ``FrontierPreview``
+  row. ``latest_frontier_preview`` will find it.
+
+Splitting these two functions makes the persistence step explicit and
+prevents the Step 3 API from accidentally returning a non-persisted
+object.
 """
 
 from __future__ import annotations
@@ -24,9 +45,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.job import FrontierPreview, Project
 from app.services.crawl_scope import (
+    REASON_CURRENT_PAGE_SCOPE,
     REASON_EXCLUDED_SCOPE_MODE,
     classify_links_for_scope,
-    discover_links_for_scope,
     scope_max_pages,
 )
 from app.services.extraction_spec_service import latest_spec
@@ -35,23 +56,31 @@ from app.services.url_normalizer import normalize_url
 from app.services.url_validator import URLValidationError, validate_url
 
 DEFAULT_SAMPLE_LIMIT = 100
+SCOPE_EXCLUSION_THRESHOLD = 10
 
 
-async def create_frontier_preview(
-    db: AsyncSession,
+def _scope_hash(scope: dict[str, Any]) -> str:
+    payload = json.dumps(scope, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def build_frontier_preview_from_fetch(
     project: Project,
+    spec,
+    html: str,
     *,
     max_urls: int = DEFAULT_SAMPLE_LIMIT,
 ) -> FrontierPreview | None:
-    """Generate a frontier preview for the project's current spec.
+    """Build (but do not persist) a frontier preview given fetched HTML.
 
-    Returns the persisted ``FrontierPreview`` row, or None if the project
-    has no spec yet or the seed URL cannot be fetched safely.
+    Splitting the build from the fetch keeps this function pure and
+    testable: tests can pass inline HTML strings without monkey-patching
+    the fetcher. It is a synchronous, pure-Python helper; the only
+    async work in this module is the real fetch done by
+    :func:`create_frontier_preview`.
     """
-    spec = await latest_spec(db, project.id)
     if spec is None:
         return None
-
     scope = spec.crawl_scope or {}
     seed = project.normalized_url or project.url
     if not seed:
@@ -60,36 +89,6 @@ async def create_frontier_preview(
         seed_validated = validate_url(seed)
     except URLValidationError:
         return None
-
-    # Fetch the seed page using the project's render mode. We do not
-    # call the provider for link classification in v1; heuristics only.
-    try:
-        fetch = await fetch_url(seed_validated, project.render_mode.value)
-    except Exception:
-        fetch = None
-
-    html = fetch.html if fetch is not None else ""
-    if not html:
-        return FrontierPreview(
-            project_id=project.id,
-            spec_id=spec.id,
-            scope_hash=_scope_hash(scope),
-            included_urls=[],
-            excluded_urls=[],
-            estimated_page_count=scope_max_pages(scope),
-            warnings=[
-                {
-                    "code": "SEED_FETCH_FAILED",
-                    "message": "Could not fetch the seed URL; preview is empty.",
-                }
-            ],
-            quality_summary={
-                "included_count": 0,
-                "excluded_count": 0,
-                "unrelated_same_origin_count": 0,
-                "source": "seed_page_frontier_preview",
-            },
-        )
 
     decisions = classify_links_for_scope(
         html,
@@ -101,30 +100,34 @@ async def create_frontier_preview(
 
     included: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
-    unrelated_count = 0
+    unrelated_same_origin_count = 0
     for d in decisions:
         if d.decision == "included":
             if len(included) < max_urls:
                 included.append(d.to_dict())
         else:
-            if d.reason_code == "EXCLUDED_DIFFERENT_ORIGIN":
-                unrelated_count += 1
+            # Count same-origin links that the current scope dropped.
+            # That is the count the user actually needs to see: same-origin
+            # but not selected by the chosen mode (e.g. category links
+            # excluded under PAGINATION, or any link under CURRENT_PAGE).
+            if d.reason_code in (REASON_EXCLUDED_SCOPE_MODE, REASON_CURRENT_PAGE_SCOPE):
+                unrelated_same_origin_count += 1
             if len(excluded) < max_urls:
                 excluded.append(d.to_dict())
 
     warnings: list[dict[str, Any]] = []
-    if unrelated_count >= 10:
+    if unrelated_same_origin_count >= SCOPE_EXCLUSION_THRESHOLD:
         warnings.append(
             {
                 "code": "FRONTIER_HAS_MANY_EXCLUSIONS",
-                "count": unrelated_count,
+                "count": unrelated_same_origin_count,
                 "message": (
-                    f"{unrelated_count} same-origin links were excluded by the current scope."
+                    f"{unrelated_same_origin_count} same-origin links were "
+                    f"excluded by the current crawl scope mode."
                 ),
             }
         )
 
-    # Always also persist the seed decision so downstream UIs can render it.
     seed_decision = {
         "url": seed,
         "normalized_url": normalize_url(seed),
@@ -153,10 +156,79 @@ async def create_frontier_preview(
         quality_summary={
             "included_count": len(included),
             "excluded_count": len(excluded),
-            "unrelated_same_origin_count": unrelated_count,
+            "unrelated_same_origin_count": unrelated_same_origin_count,
             "source": "seed_page_frontier_preview",
         },
     )
+
+
+async def create_frontier_preview(
+    db: AsyncSession,
+    project: Project,
+    *,
+    max_urls: int = DEFAULT_SAMPLE_LIMIT,
+) -> FrontierPreview | None:
+    """Persist a frontier preview for the project's current spec.
+
+    The function fetches the seed page using the project's render
+    mode, runs the scope-aware classifier, and writes the resulting
+    ``FrontierPreview`` row to the database. Returns the persisted row
+    (so callers can use ``.id`` immediately) or None if the spec is
+    missing or the seed URL cannot be fetched safely.
+
+    This is the only public entry point that mutates the database. The
+    builder functions above are read-only.
+    """
+    spec = await latest_spec(db, project.id)
+    if spec is None:
+        return None
+    scope = spec.crawl_scope or {}
+    seed = project.normalized_url or project.url
+    if not seed:
+        return None
+    try:
+        seed_validated = validate_url(seed)
+    except URLValidationError:
+        return None
+
+    try:
+        fetch = await fetch_url(seed_validated, project.render_mode.value)
+    except Exception:
+        fetch = None
+
+    html = fetch.html if fetch is not None else ""
+    if not html:
+        preview = FrontierPreview(
+            project_id=project.id,
+            spec_id=spec.id,
+            scope_hash=_scope_hash(scope),
+            included_urls=[],
+            excluded_urls=[],
+            estimated_page_count=scope_max_pages(scope),
+            warnings=[
+                {
+                    "code": "SEED_FETCH_FAILED",
+                    "message": "Could not fetch the seed URL; preview is empty.",
+                }
+            ],
+            quality_summary={
+                "included_count": 0,
+                "excluded_count": 0,
+                "unrelated_same_origin_count": 0,
+                "source": "seed_page_frontier_preview",
+            },
+        )
+    else:
+        preview = build_frontier_preview_from_fetch(
+            project, spec, html, max_urls=max_urls
+        )
+        if preview is None:
+            return None
+
+    db.add(preview)
+    await db.flush()
+    await db.refresh(preview)
+    return preview
 
 
 async def latest_frontier_preview(db: AsyncSession, project_id: int) -> FrontierPreview | None:
@@ -169,13 +241,10 @@ async def latest_frontier_preview(db: AsyncSession, project_id: int) -> Frontier
     return result.scalar_one_or_none()
 
 
-def _scope_hash(scope: dict[str, Any]) -> str:
-    payload = json.dumps(scope, sort_keys=True, default=str)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
 __all__ = [
     "DEFAULT_SAMPLE_LIMIT",
+    "SCOPE_EXCLUSION_THRESHOLD",
+    "build_frontier_preview_from_fetch",
     "create_frontier_preview",
     "latest_frontier_preview",
 ]

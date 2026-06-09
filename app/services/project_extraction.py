@@ -26,19 +26,17 @@ from app.models.job import (
 )
 from app.services.crawl_scope import (
     CrawlScopeMode,
+    ScopeConfirmationError,
+    assert_scope_confirmed,
     discover_links_for_scope,
     scope_max_pages,
-    scope_requires_confirmation,
 )
 from app.services.extractor import extract_records_from_html
 from app.services.fetcher import FetchError, fetch_url
 from app.services.robots_service import RobotsResult, check_robots
 from app.services.url_normalizer import discover_same_site_links, normalize_url
 from app.services.url_validator import URLValidationError, validate_url
-from app.services.extraction_quality import (
-    compute_extraction_quality,
-    WARN_SCOPE_NOT_CONFIRMED,
-)
+from app.services.extraction_quality import compute_extraction_quality
 
 
 logger = logging.getLogger(__name__)
@@ -59,8 +57,22 @@ async def start_project_extraction(
     db: AsyncSession,
     project: Project,
     spec: ExtractionSpec,
+    *,
+    allow_unconfirmed: bool = False,
 ) -> None:
-    """Prepare extraction state and queue the seed page."""
+    """Prepare extraction state and queue the seed page.
+
+    Enforces the scope confirmation policy. By default, non-CURRENT_PAGE
+    scopes with status != USER_CONFIRMED are rejected with
+    ``ScopeConfirmationError``. The API layer is expected to translate
+    that error into HTTP 409. The background executor and tests may pass
+    ``allow_unconfirmed=True`` for explicit legacy-compat paths.
+    """
+    assert_scope_confirmed(
+        spec.crawl_scope,
+        allow_unconfirmed=allow_unconfirmed,
+        allow_legacy_missing=True,
+    )
     project.transition_to(ProjectState.DISCOVERING)
     project.error = None
     project.error_code = None
@@ -80,6 +92,51 @@ async def start_project_extraction(
         )
     )
     await db.flush()
+
+
+def select_links_to_enqueue(
+    *,
+    html: str,
+    page_url: str,
+    root_url: str,
+    scope: dict[str, Any] | None,
+    legacy_patterns: list[str] | None = None,
+    analysis: dict[str, Any] | None = None,
+    remaining_slots: int,
+) -> list[str]:
+    """Decide which discovered links to enqueue as the next crawl batch.
+
+    This is the small extraction-service seam exercised by the
+    integration tests. It is also the function called by
+    ``execute_project_extraction`` for every fetched page. It returns
+    the normalized URLs that should be enqueued, never the full
+    UrlDecision list. ``remaining_slots`` is the maximum number of
+    URLs to return. When ``scope`` is missing or has no mode, the
+    legacy same-site discoverer is used.
+    """
+    if remaining_slots <= 0 or not html:
+        return []
+    scope_mode = scope.get("mode") if isinstance(scope, dict) else None
+    if scope_mode:
+        links = discover_links_for_scope(
+            html,
+            page_url=page_url,
+            root_url=root_url,
+            scope=scope,
+            analysis=analysis,
+            limit=remaining_slots,
+        )
+    else:
+        links = discover_same_site_links(
+            html,
+            page_url=page_url,
+            root_url=root_url,
+            patterns=legacy_patterns or [],
+            limit=remaining_slots,
+        )
+    if scope_mode == CrawlScopeMode.CURRENT_PAGE.value:
+        links = []
+    return links
 
 
 async def _project_was_canceled(db: AsyncSession, project_id: int) -> bool:
@@ -156,6 +213,18 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
             return
 
         try:
+            # Defensive confirmation gate. ``start_project_extraction``
+            # already enforces this synchronously; this catch-all keeps
+            # a forgotten confirmation from silently broad-crawling if
+            # the executor is ever invoked directly. A scope that is
+            # missing (legacy) still passes here so existing data is
+            # not stranded; the API never starts such a scope anyway.
+            assert_scope_confirmed(
+                spec.crawl_scope,
+                allow_unconfirmed=False,
+                allow_legacy_missing=True,
+            )
+
             if project.state == ProjectState.DISCOVERING:
                 project.transition_to(ProjectState.EXTRACTING)
                 await db.commit()
@@ -164,9 +233,6 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
             total_records = 0
             scope = spec.crawl_scope or {}
             scope_mode = scope.get("mode") if scope else None
-            scope_confirmed = (
-                not scope_requires_confirmation(scope) if scope else True
-            )
             page_limit = min(spec.page_limit, settings.MAX_PAGES_PER_JOB)
             if isinstance(scope, dict) and scope_mode:
                 try:
@@ -175,7 +241,6 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                         page_limit = scope_max
                 except Exception:
                     pass
-
 
             while processed_pages < page_limit:
                 if await _project_was_canceled(db, project_id):
@@ -215,15 +280,17 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                     current_count = await _crawl_page_count(db, project_id)
                     remaining = max(0, page_limit - current_count)
                     if isinstance(scope, dict) and scope_mode:
-                        links = discover_links_for_scope(
-                            fetched.html,
+                        links = select_links_to_enqueue(
+                            html=fetched.html,
                             page_url=fetched.final_url,
                             root_url=validated_seed,
                             scope=scope,
+                            legacy_patterns=spec.url_patterns or [],
                             analysis=project.analysis if isinstance(project.analysis, dict) else None,
-                            limit=remaining,
+                            remaining_slots=remaining,
                         )
                     else:
+                        # Legacy: no scope, fall back to same-site BFS.
                         links = discover_same_site_links(
                             fetched.html,
                             page_url=fetched.final_url,
@@ -231,8 +298,6 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                             patterns=spec.url_patterns or [],
                             limit=remaining,
                         )
-                    if scope_mode == CrawlScopeMode.CURRENT_PAGE.value:
-                        links = []
 
                     await _insert_discovered_pages(
                         db,
@@ -287,8 +352,6 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
             else:
                 project.state = ProjectState.EXPORTING
 
-            # Persist extraction quality summary on the spec so the
-            # frontend can render the trust panel without re-computing.
             try:
                 records = (
                     await db.execute(
@@ -314,7 +377,6 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                     pages_failed=pages_failed,
                 )
             except Exception:
-                # Quality is best-effort; never block extraction completion.
                 spec.quality_summary = {}
 
             db.add(
@@ -332,6 +394,11 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                 "project_extraction.completed",
                 extra={"project_id": project_id, "records": total_records, "pages": processed_pages},
             )
+        except ScopeConfirmationError as exc:
+            logger.exception("project_extraction.scope_unconfirmed", extra={"project_id": project_id, "error": str(exc)})
+            project = await db.get(Project, project_id)
+            if project and project.state != ProjectState.CANCELED:
+                await _mark_project_failed(db, project, str(exc), exc.code)
         except Exception as exc:
             logger.exception("project_extraction.failed", extra={"project_id": project_id, "error": str(exc)})
             project = await db.get(Project, project_id)
