@@ -113,7 +113,7 @@ class TestSecretRedactingFilter:
         )
         filt.filter(record)
         assert "sk-abc123" not in record.getMessage()
-        assert "[REDACTED]" in record.getMessage()
+        assert "[REDACTED_SECRET]" in record.getMessage()
 
     def test_redacts_args(self):
         filt = SecretRedactingFilter()
@@ -129,7 +129,7 @@ class TestSecretRedactingFilter:
         filt.filter(record)
         redacted_msg = record.getMessage()
         assert "sk-abc123" not in redacted_msg
-        assert "[REDACTED]" in redacted_msg
+        assert "[REDACTED_SECRET]" in redacted_msg
 
     def test_returns_true_always(self):
         """Filter always returns True (never suppresses records)."""
@@ -240,7 +240,8 @@ class TestJsonFormatter:
         try:
             raise ValueError("test error")
         except ValueError:
-            exc_info = True
+            import sys
+            ei = sys.exc_info()
         record = logging.LogRecord(
             "test",
             logging.ERROR,
@@ -248,11 +249,8 @@ class TestJsonFormatter:
             0,
             "test_error",
             (),
-            exc_info,
+            ei,
         )
-        # Need to actually capture the exc_info
-        import sys
-        record.exc_info = sys.exc_info()
         output = fmt.format(record)
         parsed = json.loads(output)
         assert "exception" in parsed
