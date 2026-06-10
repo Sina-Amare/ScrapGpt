@@ -8,6 +8,7 @@ and frontierpreview.
 from __future__ import annotations
 
 import copy
+import logging
 import re
 from dataclasses import dataclass
 from fnmatch import fnmatch
@@ -59,6 +60,9 @@ DEFAULT_REASON_TEXT = {
     REASON_EXCLUDED_DEPTH_LIMIT: "Excluded: depth limit reached for this scope.",
     REASON_EXCLUDED_INVALID_URL: "Excluded: URL is malformed or not safe.",
 }
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -209,11 +213,26 @@ def assert_scope_confirmed(
     mode = scope.get("mode")
     status = scope.get("status")
     if mode == CrawlScopeMode.CURRENT_PAGE.value:
+        logger.info(
+            "scope.confirmation_gate_passed",
+            extra={"scope_mode": mode},
+        )
         return
     if status == "USER_CONFIRMED":
+        logger.info(
+            "scope.confirmation_gate_passed",
+            extra={
+                "scope_mode": mode,
+                "scope_status": status,
+            },
+        )
         return
     if allow_unconfirmed:
         return
+    logger.warning(
+        "scope.confirmation_required",
+        extra={"scope_mode": mode, "scope_status": status},
+    )
     raise ScopeConfirmationError(scope)
 
 
@@ -298,6 +317,25 @@ def classify_links_for_scope(
                 analysis=analysis,
                 link_text=link_text,
             )
+        )
+
+    included = [d for d in decisions if d.decision == "included"]
+    excluded = [d for d in decisions if d.decision == "excluded"]
+    logger.info(
+        "scope.classified",
+        extra={
+            "scope_mode": mode,
+            "included_count": len(included),
+            "excluded_count": len(excluded),
+        },
+    )
+    for d in excluded:
+        logger.debug(
+            "scope.url_excluded",
+            extra={
+                "url": d.url,
+                "reason_code": d.reason_code,
+            },
         )
     return decisions
 
