@@ -403,6 +403,40 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                 if settings.MIN_CRAWL_DELAY_MS:
                     await asyncio.sleep(settings.MIN_CRAWL_DELAY_MS / 1000)
 
+            # Post-loop completion check: if no pages were successfully
+            # extracted, the project should fail rather than complete
+            # with zero results. This covers the case where every page
+            # hit a fetch error, URL validation error, or robots block.
+            # Per-page failure reasons are already stored on each
+            # CrawlPage row for debugging.
+            pages_extracted = await db.scalar(
+                select(func.count(CrawlPage.id)).where(
+                    CrawlPage.project_id == project_id,
+                    CrawlPage.state == CrawlPageState.EXTRACTED,
+                )
+            )
+            pages_extracted = int(pages_extracted or 0)
+
+            if pages_extracted == 0 and total_records == 0:
+                logger.warning(
+                    "extraction.all_pages_failed",
+                    extra={
+                        "project_id": project_id,
+                        "pages_attempted": processed_pages,
+                    },
+                )
+                project = await db.get(Project, project_id)
+                if project and project.state != ProjectState.CANCELED:
+                    await _mark_project_failed(
+                        db, project,
+                        (
+                            f"All {processed_pages} pages failed or "
+                            f"were blocked during extraction"
+                        ),
+                        "ALL_PAGES_FAILED",
+                    )
+                return
+
             project = await db.get(Project, project_id)
             if not project or project.state == ProjectState.CANCELED:
                 return
