@@ -22,8 +22,9 @@ Close the remaining reliability and extraction-hardening gaps identified during 
 
 - **Endpoint level** (`app/api/v1/endpoints/scrape.py`): Added `validate_url()` before task creation. Returns HTTP 400 with `error_code` immediately, giving the user feedback without creating a task.
 - **Executor level** (`app/services/task_executor.py`): Added Phase 0 (SSRF validation) and Phase 0.5 (robots.txt check) before Phase 1 (transition to SCRAPING). Uses `validated_url` for the scrape call instead of the raw URL. This catches any URLs stored before the endpoint check was added.
+- **Redirect level** (`app/services/scraper.py`): The legacy scraper now disables automatic redirects and validates each `Location` target before following it.
 
-**Design decision:** Did NOT modify `scraper.py` itself. The legacy scraper uses `follow_redirects=True` without per-hop validation, which is less safe than the project pipeline's fetcher. Adding per-hop validation to `scraper.py` would require rewriting its fetch logic. Instead, `validate_url()` blocks private-network destinations before the fetch starts, covering the primary SSRF risk. Per-redirect validation in the legacy scraper is deferred.
+**Design decision:** Keep the legacy scraper changes narrow. It still performs simple HTML fetch/extract behavior, but redirect following now uses the same redirect-target validator as the project fetcher.
 
 **Files changed:**
 
@@ -148,7 +149,7 @@ Close the remaining reliability and extraction-hardening gaps identified during 
 
 ## Safe-Evolution Notes
 
-- Per-redirect validation in the legacy scraper (`app/services/scraper.py`) is deferred. When the legacy pipeline is removed (per strategic redesign), this becomes moot.
+- Legacy scraper redirect targets are now validated before being followed.
 - `CRAWL_CONCURRENCY` will be used when concurrent workers are implemented. The description should be updated at that time.
 - The watchdog timeout defaults (10/60/10 minutes) are tuned for single-instance self-hosted deployment. Multi-worker deployment may need different timeouts.
 - The lease reaper runs at 60-second intervals. For multi-worker deployment with higher concurrency, a 30-second interval may be appropriate (as suggested in the strategic redesign).
@@ -162,6 +163,7 @@ Close the remaining reliability and extraction-hardening gaps identified during 
   - 2 SSRF endpoint rejection tests (private IP, loopback)
   - 1 SSRF endpoint acceptance test (valid public URL)
   - 1 executor SSRF defense-in-depth test
+  - 2 scraper redirect validation tests
   - 2 lease reaper tests (expired reset, inactive project skip)
   - 2 stuck-project watchdog tests (DISCOVERING, EXTRACTING)
   - 2 extraction completion semantics tests (all-failed, partial success)
@@ -176,7 +178,7 @@ Close the remaining reliability and extraction-hardening gaps identified during 
 
 1. **Stuck-project watchdog implementation:** The plan suggested using `transition_job_to_failed()` with `expected_states` guards. During implementation, I discovered this was a type mismatch — `transition_job_to_failed()` operates on the `jobs` table with `JobState` enums, not the `projects` table with `ProjectState` enums. Fixed by using atomic `update()` statements with WHERE-clause state guards instead.
 
-2. **SSRF fix scope:** The plan suggested modifying `scraper.py` to add per-redirect validation. After re-evaluating the legacy pipeline's future (per the user's implementation note), I decided to add validation at the endpoint AND executor levels instead. This is simpler, safer, and doesn't modify the scraper itself. Per-redirect validation in the legacy scraper is deferred.
+2. **SSRF fix scope:** The first implementation added endpoint and executor validation. Final approval fixes also added per-redirect validation in `scraper.py` to close public-to-private redirect SSRF.
 
 3. **Ownership boundaries:** The plan mentioned documenting ownership boundaries between lease recovery and watchdog recovery. This is now documented in the watchdog.py module docstring and in this learning doc.
 

@@ -19,9 +19,18 @@ from app.services.scraper import ScrapeError, scrape_url
 
 
 class FakeResponse:
-    def __init__(self, html: str, status_code: int = 200):
+    def __init__(
+        self,
+        html: str,
+        status_code: int = 200,
+        *,
+        headers: dict | None = None,
+        is_redirect: bool = False,
+    ):
         self.text = html
         self.status_code = status_code
+        self.headers = headers or {}
+        self.is_redirect = is_redirect
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -38,9 +47,16 @@ class FakeResponse:
 class FakeClient:
     """Async context manager mimicking httpx.AsyncClient."""
 
-    def __init__(self, response: FakeResponse | None = None, raise_on_get=None):
+    def __init__(
+        self,
+        response: FakeResponse | None = None,
+        raise_on_get=None,
+        responses: list[FakeResponse] | None = None,
+    ):
         self._response = response
         self._raise_on_get = raise_on_get
+        self._responses = list(responses or [])
+        self.urls: list[str] = []
 
     async def __aenter__(self):
         return self
@@ -49,8 +65,11 @@ class FakeClient:
         pass
 
     async def get(self, url, **kwargs):
+        self.urls.append(url)
         if self._raise_on_get is not None:
             raise self._raise_on_get
+        if self._responses:
+            return self._responses.pop(0)
         return self._response
 
 
@@ -155,6 +174,48 @@ async def test_scrape_url_does_not_truncate_content_under_50000(monkeypatch):
     # Full text should be present (not truncated)
     assert "word" in content
     assert len(content) < 50000
+
+
+@pytest.mark.asyncio
+async def test_scrape_url_follows_public_redirect_after_validation(monkeypatch):
+    html = "<html><head><title>Final</title></head><body><p>Done</p></body></html>"
+    client = FakeClient(
+        responses=[
+            FakeResponse(
+                "",
+                status_code=302,
+                headers={"location": "https://example.com/final"},
+                is_redirect=True,
+            ),
+            FakeResponse(html),
+        ]
+    )
+    _patch_client(monkeypatch, client)
+
+    content = await scrape_url("https://example.com/start")
+
+    assert "Final" in content
+    assert client.urls == ["https://example.com/start", "https://example.com/final"]
+
+
+@pytest.mark.asyncio
+async def test_scrape_url_blocks_redirect_to_private_address(monkeypatch):
+    client = FakeClient(
+        responses=[
+            FakeResponse(
+                "",
+                status_code=302,
+                headers={"location": "http://127.0.0.1/admin"},
+                is_redirect=True,
+            ),
+        ]
+    )
+    _patch_client(monkeypatch, client)
+
+    with pytest.raises(ScrapeError) as exc_info:
+        await scrape_url("https://example.com/start")
+
+    assert "Redirect target blocked" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------

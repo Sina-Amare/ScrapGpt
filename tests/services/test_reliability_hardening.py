@@ -11,6 +11,7 @@ Covers:
 """
 
 from datetime import datetime, timezone, timedelta
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI, status
@@ -21,8 +22,11 @@ from app.api.v1.endpoints import scrape
 from app.models.job import (
     CrawlPage,
     CrawlPageState,
+    ExtractionMode,
+    ExtractionSpec,
     Project,
     ProjectState,
+    RenderMode,
 )
 from app.models.scrape_task import ScrapeTask, TaskState
 from app.models.user import User
@@ -521,6 +525,246 @@ def test_partial_extraction_completes_normally():
     assert pages_extracted > 0
     # Project should proceed to EXPORTING → COMPLETED
     assert project.can_transition_to(ProjectState.EXPORTING)
+
+
+class FakeExtractionDB:
+    """Async session fake for exercising execute_project_extraction."""
+
+    def __init__(
+        self,
+        project: Project,
+        spec: ExtractionSpec,
+        *,
+        pages_extracted: int,
+    ):
+        self.project = project
+        self.spec = spec
+        self.pages_extracted = pages_extracted
+        self.commits = 0
+        self.added = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+    async def get(self, model, pk):
+        if model == Project and pk == self.project.id:
+            return self.project
+        if model == ExtractionSpec and pk == self.spec.id:
+            return self.spec
+        return None
+
+    async def commit(self):
+        self.commits += 1
+
+    async def flush(self):
+        pass
+
+    async def execute(self, statement):
+        return FakeListResult([])
+
+    async def scalar(self, statement):
+        return self.pages_extracted
+
+    def add(self, obj):
+        self.added.append(obj)
+
+
+def _extraction_project(
+    state: ProjectState = ProjectState.DISCOVERING,
+) -> Project:
+    return Project(
+        id=1,
+        user_id=1,
+        url="https://example.com",
+        normalized_url="https://example.com",
+        state=state,
+        render_mode=RenderMode.STATIC,
+    )
+
+
+def _extraction_spec() -> ExtractionSpec:
+    return ExtractionSpec(
+        id=10,
+        project_id=1,
+        mode=ExtractionMode.STRUCTURED,
+        fields=[],
+        content_config={},
+        url_patterns=[],
+        page_limit=1,
+        export_format="csv",
+        crawl_scope={"mode": "CURRENT_PAGE", "status": "SYSTEM_DEFAULTED"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_project_extraction_all_pages_failed_real_path(
+    monkeypatch,
+):
+    """The real executor marks all-page failure as FAILED/ALL_PAGES_FAILED."""
+    from app.services import project_extraction
+    from app.services.fetcher import FetchError
+    from app.services.robots_service import RobotsResult
+
+    project = _extraction_project()
+    spec = _extraction_spec()
+    page = CrawlPage(
+        id=100,
+        project_id=project.id,
+        url=project.url,
+        normalized_url=project.normalized_url,
+        state=CrawlPageState.PENDING,
+        depth=0,
+        retry_count=0,
+    )
+    db = FakeExtractionDB(project, spec, pages_extracted=0)
+    pending_pages = [page]
+
+    monkeypatch.setattr(
+        project_extraction,
+        "async_session_factory",
+        lambda: db,
+    )
+    monkeypatch.setattr(
+        project_extraction,
+        "settings",
+        SimpleNamespace(MAX_PAGES_PER_JOB=500, MIN_CRAWL_DELAY_MS=0),
+    )
+    monkeypatch.setattr(project_extraction, "validate_url", lambda url: url)
+
+    async def not_canceled(db, project_id):
+        return False
+
+    async def next_pending_page(db, project_id):
+        return pending_pages.pop(0) if pending_pages else None
+
+    async def robots_allowed(url):
+        return SimpleNamespace(result=RobotsResult.ALLOWED, reason=None)
+
+    monkeypatch.setattr(
+        project_extraction,
+        "_project_was_canceled",
+        not_canceled,
+    )
+    monkeypatch.setattr(
+        project_extraction,
+        "_pending_page",
+        next_pending_page,
+    )
+    monkeypatch.setattr(
+        project_extraction,
+        "check_robots",
+        robots_allowed,
+    )
+
+    async def fake_fetch_url(url, render_mode):
+        raise FetchError("boom", "FETCH_FAILED")
+
+    monkeypatch.setattr(project_extraction, "fetch_url", fake_fetch_url)
+
+    await project_extraction.execute_project_extraction(project.id, spec.id)
+
+    assert project.state == ProjectState.FAILED
+    assert project.error_code == "ALL_PAGES_FAILED"
+    assert page.state == CrawlPageState.FAILED
+    assert page.lease_expires_at is None
+
+
+@pytest.mark.asyncio
+async def test_execute_project_extraction_does_not_complete_failed_project(
+    monkeypatch,
+):
+    """A watchdog-failed project must not be forced to COMPLETED."""
+    from app.services import project_extraction
+    from app.services.robots_service import RobotsResult
+
+    project = _extraction_project()
+    spec = _extraction_spec()
+    page = CrawlPage(
+        id=101,
+        project_id=project.id,
+        url=project.url,
+        normalized_url=project.normalized_url,
+        state=CrawlPageState.PENDING,
+        depth=0,
+        retry_count=0,
+    )
+
+    class RaceDB(FakeExtractionDB):
+        async def scalar(self, statement):
+            self.project.state = ProjectState.FAILED
+            self.project.error = "Watchdog failed project"
+            self.project.error_code = "EXTRACTION_FAILED"
+            return self.pages_extracted
+
+    db = RaceDB(project, spec, pages_extracted=1)
+    pending_pages = [page]
+
+    monkeypatch.setattr(project_extraction, "async_session_factory", lambda: db)
+    monkeypatch.setattr(
+        project_extraction,
+        "settings",
+        SimpleNamespace(MAX_PAGES_PER_JOB=500, MIN_CRAWL_DELAY_MS=0),
+    )
+    monkeypatch.setattr(project_extraction, "validate_url", lambda url: url)
+
+    async def not_canceled(db, project_id):
+        return False
+
+    async def next_pending_page(db, project_id):
+        return pending_pages.pop(0) if pending_pages else None
+
+    async def crawl_page_count(db, project_id):
+        return 1
+
+    async def robots_allowed(url):
+        return SimpleNamespace(result=RobotsResult.ALLOWED, reason=None)
+
+    async def fake_fetch_url(url, render_mode):
+        return SimpleNamespace(
+            html="<html><body>No records</body></html>",
+            final_url=url,
+        )
+
+    monkeypatch.setattr(
+        project_extraction,
+        "_project_was_canceled",
+        not_canceled,
+    )
+    monkeypatch.setattr(
+        project_extraction,
+        "_pending_page",
+        next_pending_page,
+    )
+    monkeypatch.setattr(
+        project_extraction,
+        "_crawl_page_count",
+        crawl_page_count,
+    )
+    monkeypatch.setattr(
+        project_extraction,
+        "check_robots",
+        robots_allowed,
+    )
+    monkeypatch.setattr(
+        project_extraction,
+        "fetch_url",
+        fake_fetch_url,
+    )
+    monkeypatch.setattr(
+        project_extraction,
+        "extract_records_from_html",
+        lambda *args, **kwargs: [],
+    )
+
+    await project_extraction.execute_project_extraction(project.id, spec.id)
+
+    assert project.state == ProjectState.FAILED
+    assert project.error_code == "EXTRACTION_FAILED"
+    assert page.state == CrawlPageState.EXTRACTED
+    assert db.added == []
 
 
 # ---------------------------------------------------------------------------

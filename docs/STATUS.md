@@ -60,7 +60,7 @@ Last verified: June 10, 2026.
   - See `docs/learning/11_logging_observability.md` for architecture, invariants, and full event catalog.
 
 - **Reliability hardening (Phase 2.5 closeout):**
-  - Legacy `/scrape` pipeline now has SSRF-safe URL validation at both the endpoint (immediate 400 feedback) and executor (defense-in-depth) levels, plus `robots.txt` checks mirroring the project pipeline.
+  - Legacy `/scrape` pipeline now has SSRF-safe URL validation at the endpoint (immediate 400 feedback), executor (defense-in-depth), and redirect-hop levels, plus `robots.txt` checks mirroring the project pipeline.
   - CrawlPage lease reaper: `cleanup_expired_crawl_page_leases()` resets FETCHING pages with expired leases back to PENDING, only within active projects. Runs every 60 seconds via the watchdog scheduler.
   - Stuck-project watchdog: `cleanup_stuck_projects()` fails projects stuck in DISCOVERING/EXTRACTING/EXPORTING beyond configurable timeouts (10/60/10 minutes). Uses atomic UPDATE with WHERE-clause state guards for concurrency safety.
   - Extraction completion semantics: projects where all pages fail or are blocked now transition to FAILED with `error_code = "ALL_PAGES_FAILED"` instead of COMPLETED with zero records. Partial success (some pages extracted) still completes normally with quality assessment.

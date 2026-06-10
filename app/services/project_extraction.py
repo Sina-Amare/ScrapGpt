@@ -426,7 +426,7 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                     },
                 )
                 project = await db.get(Project, project_id)
-                if project and project.state != ProjectState.CANCELED:
+                if project and not project.is_terminal:
                     await _mark_project_failed(
                         db, project,
                         (
@@ -438,14 +438,21 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                 return
 
             project = await db.get(Project, project_id)
-            if not project or project.state == ProjectState.CANCELED:
+            if not project or project.is_terminal:
                 return
             if project.state == ProjectState.EXTRACTING:
                 project.transition_to(ProjectState.EXPORTING)
             elif project.can_transition_to(ProjectState.EXPORTING):
                 project.transition_to(ProjectState.EXPORTING)
             else:
-                project.state = ProjectState.EXPORTING
+                logger.warning(
+                    "project_extraction.finalization_skipped",
+                    extra={
+                        "project_id": project_id,
+                        "state": project.state.value,
+                    },
+                )
+                return
 
             try:
                 records = (

@@ -10,6 +10,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from app.core.config import settings
+from app.services.url_validator import URLValidationError, validate_redirect_target
 
 
 logger = logging.getLogger(__name__)
@@ -39,14 +40,29 @@ async def scrape_url(url: str) -> str:
     logger.info("scrape.started", extra={"url": url})
 
     try:
+        current_url = url
+        hops = 0
         async with httpx.AsyncClient(
             timeout=settings.SCRAPE_TIMEOUT,
-            follow_redirects=True,
+            follow_redirects=False,
         ) as client:
-            response = await client.get(
-                url,
-                headers={"User-Agent": settings.USER_AGENT},
-            )
+            while True:
+                response = await client.get(
+                    current_url,
+                    headers={"User-Agent": settings.USER_AGENT},
+                )
+                if not response.is_redirect:
+                    break
+                if hops >= settings.MAX_REDIRECTS:
+                    raise ScrapeError(
+                        f"Too many redirects (>{settings.MAX_REDIRECTS})"
+                    )
+                location = response.headers.get("location", "")
+                if not location:
+                    raise ScrapeError("Redirect with no Location header")
+                current_url = validate_redirect_target(location, current_url)
+                hops += 1
+
             response.raise_for_status()
 
         # Parse HTML
@@ -96,6 +112,13 @@ async def scrape_url(url: str) -> str:
     except httpx.RequestError as e:
         logger.error("scrape.network_error", extra={"url": url, "error": str(e)})
         raise ScrapeError(f"Network error: {str(e)}")
+
+    except URLValidationError as e:
+        logger.error("scrape.redirect_blocked", extra={"url": url, "error": str(e)})
+        raise ScrapeError(f"Redirect target blocked: {str(e)}")
+
+    except ScrapeError:
+        raise
 
     except Exception as e:
         logger.error("scrape.unexpected_error", extra={"url": url, "error": str(e)})
