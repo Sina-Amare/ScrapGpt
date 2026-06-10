@@ -4,7 +4,41 @@ This guide explains how to run the ScrapGPT backend and frontend servers locally
 
 ---
 
-## 1. Backend Server (FastAPI)
+## Quick Start — Scripts (Recommended)
+
+Two PowerShell scripts at the project root handle both servers with a single command.
+No extra terminal windows needed — both servers run as hidden background processes.
+
+### Start both servers
+
+```powershell
+.\dev-start.ps1
+```
+
+Output:
+
+```text
+Backend  started (PID 12345)  -> http://127.0.0.1:8000
+Frontend started (PID 12346) -> http://127.0.0.1:5173
+Run .\dev-stop.ps1 to stop both.
+```
+
+PIDs are saved to `.dev-pids` in the project root.
+
+### Stop both servers
+
+```powershell
+.\dev-stop.ps1
+```
+
+This kills the processes saved in `.dev-pids` and also sweeps ports 8000 and 5173 as a
+fallback (catches servers started manually).
+
+---
+
+## Manual Start (Two Terminals)
+
+### 1. Backend Server (FastAPI)
 
 Run these commands in your first terminal (at the project root directory):
 

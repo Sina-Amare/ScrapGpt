@@ -22,6 +22,7 @@ Current status: Phase 2.5 is implemented and validated for the self-hosted singl
 - Scope confirmation gate for broad crawls.
 - Extraction quality/trust signals.
 - Server-side paginated results via `GET /api/v1/projects/{id}/records-page`.
+- Structured logging with correlation IDs (`request_id`, `user_id`, `project_id`, `page_id`), auth event audit trail, provider key reveal audit, secret redaction pipeline. `LOG_FORMAT=json` for Docker.
 
 ## Tech Stack
 
@@ -120,7 +121,7 @@ venv\Scripts\python.exe tests\validation\run_validation.py
 
 Last recorded results:
 
-- Backend: 237 passed.
+- Backend: 348 passed.
 - Frontend: 70 passed; typecheck, lint, and build passed.
 - Phase 2.5 validation: 8/8 scenarios passed.
 

@@ -8,7 +8,7 @@ ScrapGPT is a self-hosted, BYOK AI-assisted web data extraction platform. The pr
 
 `URL -> Understand Data -> Choose Fields -> Preview -> Extract -> Results`
 
-The current implementation includes the Phase 2.5 crawl-scope, frontier-preview, trust-signal, and paginated-results work. Read `docs/STATUS.md` for the current runnable surface and `docs/product/strategic_redesign.md` for the forward roadmap.
+The current implementation includes Phase 2.5 (crawl-scope, frontier-preview, trust-signal, paginated-results) and structured logging with correlation IDs. Read `docs/STATUS.md` for the current runnable surface and `docs/product/strategic_redesign.md` for the forward roadmap.
 
 ## Commands
 
@@ -81,6 +81,8 @@ Dependency direction is:
 - `app/api/v1/endpoints/`: HTTP boundary only. Parse, validate, authorize, delegate.
 - `app/services/`: business logic and transaction ownership.
 - `app/models/` and `app/db/`: SQLAlchemy async ORM and database session setup.
+- `app/core/logging_config.py`: logging configuration — `configure_logging()`, formatters, `ContextInjectingFilter`, `SecretRedactingFilter`. Called first in `main.py` lifespan.
+- `app/core/log_context.py`: context variable bindings (`request_id`, `user_id`, `project_id`, `page_id`) for log correlation across async boundaries.
 - `alembic/versions/`: all schema changes.
 - `frontend/src/`: React app and API client.
 

@@ -77,26 +77,28 @@ def sanitize_url(url: str) -> str:
     return sanitized
 
 
+def _sanitize_embedded_urls(text: str) -> str:
+    """Sanitize any embedded http(s) URLs in a free-form string."""
+    if not text:
+        return text
+    return re.sub(
+        r"(https?://[^\s\"')\]]+)",
+        lambda m: sanitize_url(m.group(1)),
+        text,
+    )
+
+
+def _sanitize_freeform_text(text: str) -> str:
+    """Redact known secret patterns and sanitize embedded URLs."""
+    return redact_provider_secret(_sanitize_embedded_urls(text))
+
+
 def _sanitize_exception_text(text: str) -> str:
     """Sanitize formatted exception traceback text to prevent
     secret leaks through exception messages, stack frames,
     and local variable representations.
-
-    Applies pattern-based redaction (redact_provider_secret)
-    and URL sanitization to the entire traceback string.
     """
-    if not text:
-        return text
-    # 1. Pattern-based redaction for API keys, tokens, etc.
-    sanitized = redact_provider_secret(text)
-    # 2. URL sanitization: find any http/https URLs in the
-    #    traceback and strip their query strings/fragments.
-    sanitized = re.sub(
-        r"(https?://[^\s\"')\]]+)",
-        lambda m: sanitize_url(m.group(1)),
-        sanitized,
-    )
-    return sanitized
+    return _sanitize_freeform_text(text)
 
 
 # ---------------------------------------------------------------------------
@@ -137,12 +139,12 @@ class SecretRedactingFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         # 1. Redact the message string
-        record.msg = redact_provider_secret(str(record.msg))
+        record.msg = _sanitize_freeform_text(str(record.msg))
 
         # 2. Redact args
         if record.args:
             record.args = tuple(
-                redact_provider_secret(str(a))
+                _sanitize_freeform_text(str(a))
                 if isinstance(a, str)
                 else a
                 for a in (
@@ -172,12 +174,7 @@ class SecretRedactingFilter(logging.Filter):
 
             # String values: apply pattern-based redaction
             if isinstance(value, str):
-                redacted = redact_provider_secret(value)
-                # Also sanitize if the string looks like a URL
-                # (catches ad-hoc URL fields not in _URL_KEYS)
-                if re.match(r"^https?://", value):
-                    redacted = sanitize_url(redacted)
-                setattr(record, key, redacted)
+                setattr(record, key, _sanitize_freeform_text(value))
                 continue
 
             # Dict values: redact/sanitize recursively
@@ -207,10 +204,7 @@ class SecretRedactingFilter(logging.Filter):
             elif key in _URL_KEYS and isinstance(value, str):
                 result[key] = sanitize_url(value)
             elif isinstance(value, str):
-                redacted = redact_provider_secret(value)
-                if re.match(r"^https?://", value):
-                    redacted = sanitize_url(redacted)
-                result[key] = redacted
+                result[key] = _sanitize_freeform_text(value)
             elif isinstance(value, dict):
                 result[key] = self._redact_dict(value)
             elif isinstance(value, list):
@@ -224,10 +218,7 @@ class SecretRedactingFilter(logging.Filter):
         result: list = []
         for item in lst:
             if isinstance(item, str):
-                redacted = redact_provider_secret(item)
-                if re.match(r"^https?://", item):
-                    redacted = sanitize_url(redacted)
-                result.append(redacted)
+                result.append(_sanitize_freeform_text(item))
             elif isinstance(item, dict):
                 result.append(self._redact_dict(item))
             elif isinstance(item, list):

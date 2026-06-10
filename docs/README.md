@@ -13,6 +13,7 @@ Read these in order to understand what exists now and how it was built:
 7. [learning/08_project_workflow_migration.md](learning/08_project_workflow_migration.md) — Project workflow migration: Analyze → Fields → Preview → Extract → Results.
 8. [learning/09_phase2_real_extraction_engine.md](learning/09_phase2_real_extraction_engine.md) — real selector preview, same-site crawling, persisted records, and CSV/JSON/XLSX export.
 9. [learning/10_phase25_scope_frontier_trust.md](learning/10_phase25_scope_frontier_trust.md) — crawl scope, frontier preview, scope confirmation, trust signals, paginated results, and validation.
+10. [learning/11_logging_observability.md](learning/11_logging_observability.md) — structured logging with stdlib + contextvars: architecture, invariants, event catalog, security guarantees.
 
 Use the remaining learning docs when you need detail about the older legacy scrape pipeline or security fixes.
 
@@ -39,6 +40,7 @@ Added after every non-trivial implementation task. Explain the *why*, not just t
 - [learning/08_project_workflow_migration.md](learning/08_project_workflow_migration.md) — Why: migrate from jobs to projects and preserve compatibility while adding spec/preview/results contracts.
 - [learning/09_phase2_real_extraction_engine.md](learning/09_phase2_real_extraction_engine.md) — Why: replace seed/sample extraction with deterministic selector execution and bounded same-site crawling.
 - [learning/10_phase25_scope_frontier_trust.md](learning/10_phase25_scope_frontier_trust.md) — Why: add explicit crawl intent, preview what will be crawled, block unconfirmed broad crawls, and expose extraction quality.
+- [learning/11_logging_observability.md](learning/11_logging_observability.md) — Why: establish structured logging with correlation IDs, fix silent exception blocks, add security audit trail for auth and key reveals.
 
 ## Reviews & Validation
 

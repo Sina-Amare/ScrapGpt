@@ -635,7 +635,7 @@ Stack: React + Vite + TypeScript + Tailwind + TanStack Query + Zustand + shadcn/
 - `docker-compose.yml` — one-command local setup (app + postgres + optional redis)
 - `.env.example` — expanded with all Phase 1–4 settings (base version created in Phase 0.5)
 - `README.md` rewrite — setup instructions, BYOK guide per provider, screenshots
-- Structured JSON logging (structlog)
+- Structured JSON logging — **implemented** (stdlib `logging` + JSON formatter + `contextvars`; see `docs/learning/11_logging_observability.md`)
 - Redis-backed rate limiting (fallback to in-memory)
 - Email verification flow (`EMAIL_ENABLED=false` to disable)
 - Scheduled export cleanup (delete exports older than N days)
@@ -739,7 +739,8 @@ trafilatura>=1.8.0      # Content extraction for RAG/content mode
 sse-starlette>=1.6.0    # SSE streaming endpoint
 openpyxl>=3.1.0         # XLSX export format
 aiofiles>=23.0.0        # Async file writes for exports
-structlog>=23.0.0       # Structured JSON logging (Phase 5)
+                        # Structured JSON logging: implemented with stdlib logging +
+                        # JSON formatter + contextvars (no structlog dependency added)
 ```
 
 All existing dependencies remain. No removals.

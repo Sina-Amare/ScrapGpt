@@ -1,6 +1,6 @@
 # ScrapGPT Status
 
-Last verified: June 9, 2026.
+Last verified: June 10, 2026.
 
 ## Implemented
 
@@ -47,6 +47,17 @@ Last verified: June 9, 2026.
   - **Server-side paginated results** — `GET /projects/{id}/records-page` with `total`, `has_more`, `next_skip`, `columns`; max 500 records/page.
   - **Frontend UX layer**: `ScopeSelector`, `FrontierPreviewPanel`, `TrustSummaryPanel`, `PaginatedResultsTable`; scope confirmation flow; 409 error handling; safety limit rename; export format moved to Results.
   - All 8 E2E validation scenarios passing (see `docs/reviews/03_phase25_validation.md`).
+
+- **Logging and observability:**
+  - Structured logging with stdlib `logging` + JSON formatter + `contextvars` correlation.
+  - `app/core/logging_config.py` — `configure_logging()`, `DevFormatter`, `JsonFormatter`, `ContextInjectingFilter`, `SecretRedactingFilter` (with URL sanitization and exception traceback redaction).
+  - `app/core/log_context.py` — `request_id`, `user_id`, `project_id`, `page_id` context vars; binding helpers for HTTP middleware and background tasks.
+  - Auth event logging (`auth.register_*`, `auth.login_*`, `auth.token_refresh_*`).
+  - Provider key reveal audit trail (`security.key_revealed`, `security.key_reveal_failed`).
+  - Extraction pipeline events: scope classification, frontier preview, per-page, quality, export.
+  - Watchdog and scheduler job timing events.
+  - `LOG_FORMAT=text` (dev) / `LOG_FORMAT=json` (Docker/prod); `LOG_LEVEL` gates all output.
+  - See `docs/learning/11_logging_observability.md` for architecture, invariants, and full event catalog.
 
 ## Current Primary Workflow
 
@@ -103,7 +114,7 @@ npm.cmd run build
 
 Results:
 
-- Backend: **237 passed**, 43 warnings.
+- Backend: **348 passed**, 43 warnings.
 - Frontend tests: **70 passed**.
 - Frontend typecheck, lint, and production build: passed.
 

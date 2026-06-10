@@ -320,6 +320,109 @@ class TestExtraFieldRedactionThroughPipeline:
         assert parsed["keys"][2]["label"] == "production"
 
 
+class TestEmbeddedURLSanitizationInStringExtras:
+    """Regression tests for arbitrary string extras that contain
+    embedded URLs. These are not URL-key fields, but they commonly
+    hold exception text such as str(exc)."""
+
+    def test_error_extra_with_embedded_signed_url_sanitized(self):
+        filt = SecretRedactingFilter()
+        fmt = JsonFormatter()
+        record = logging.LogRecord(
+            "test", logging.ERROR, "", 0,
+            "project_extraction.failed", (), None,
+        )
+        record.error = (
+            "Storage error: "
+            "https://storage.blob.core.windows.net/container/file?"
+            "sv=2023-01-03&sig=abc123def456ghi789"
+        )
+
+        filt.filter(record)
+        parsed = json.loads(fmt.format(record))
+
+        assert "sig=abc123" not in parsed["error"]
+        assert "sv=2023" not in parsed["error"]
+        assert f"?{_URL_SAN}" in parsed["error"]
+        assert f"?{_URL_SAN}]" not in parsed["error"]
+
+    def test_detail_and_reason_extras_with_embedded_urls_sanitized(self):
+        filt = SecretRedactingFilter()
+        fmt = JsonFormatter()
+        record = logging.LogRecord(
+            "test", logging.WARNING, "", 0,
+            "http.validation_failed", (), None,
+        )
+        record.detail = (
+            "Reset URL failed: "
+            "https://app.example.com/reset-password?token=abc123xyz"
+        )
+        record.reason = (
+            "OAuth callback rejected: "
+            "https://app.example.com/auth/callback?code=oauth123&state=state456"
+        )
+
+        filt.filter(record)
+        parsed = json.loads(fmt.format(record))
+
+        assert "abc123xyz" not in parsed["detail"]
+        assert "oauth123" not in parsed["reason"]
+        assert "state456" not in parsed["reason"]
+        assert f"?{_URL_SAN}" in parsed["detail"]
+        assert f"?{_URL_SAN}" in parsed["reason"]
+        assert f"?{_URL_SAN}]" not in parsed["detail"]
+        assert f"?{_URL_SAN}]" not in parsed["reason"]
+
+    def test_nested_arbitrary_string_with_embedded_url_sanitized(self):
+        filt = SecretRedactingFilter()
+        fmt = JsonFormatter()
+        record = logging.LogRecord(
+            "test", logging.ERROR, "", 0,
+            "provider.nested_error", (), None,
+        )
+        record.payload = {
+            "error": (
+                "Failed endpoint "
+                "https://api.example.com/v1/data?api_key=secret&token=abc"
+            ),
+            "items": [
+                "retry "
+                "https://api.example.com/retry?session=sess123",
+            ],
+        }
+
+        filt.filter(record)
+        parsed = json.loads(fmt.format(record))
+
+        assert "api_key=secret" not in parsed["payload"]["error"]
+        assert "token=abc" not in parsed["payload"]["error"]
+        assert "session=sess123" not in parsed["payload"]["items"][0]
+        assert f"?{_URL_SAN}" in parsed["payload"]["error"]
+        assert f"?{_URL_SAN}" in parsed["payload"]["items"][0]
+        assert f"?{_URL_SAN}]" not in parsed["payload"]["error"]
+        assert f"?{_URL_SAN}]" not in parsed["payload"]["items"][0]
+
+    def test_log_message_and_args_with_embedded_urls_sanitized(self):
+        filt = SecretRedactingFilter()
+        record = logging.LogRecord(
+            "test",
+            logging.ERROR,
+            "",
+            0,
+            "fetch failed for https://example.com/a?token=msg %s",
+            ("https://example.com/b?token=arg",),
+            None,
+        )
+
+        filt.filter(record)
+        message = record.getMessage()
+
+        assert "token=msg" not in message
+        assert "token=arg" not in message
+        assert f"?{_URL_SAN}" in message
+        assert f"?{_URL_SAN}]" not in message
+
+
 # ---------------------------------------------------------------------------
 # Middleware cleanup on exceptions
 # ---------------------------------------------------------------------------
