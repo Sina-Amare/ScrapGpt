@@ -1,21 +1,48 @@
 """
-Watchdog service for stuck task cleanup.
+Watchdog service for stuck task cleanup and crash recovery.
 
-Detects and fails tasks stuck in non-terminal states.
+Detects and fails tasks/projects stuck in non-terminal states,
+and recovers crawl pages whose leases have expired (indicating
+a crashed worker).
+
+Ownership boundaries:
+- cleanup_expired_crawl_page_leases: page-level recovery.
+  Resets FETCHING pages with expired leases back to PENDING so
+  they can be retried. Only operates on pages within projects
+  that are still in active extraction states.
+
+- cleanup_stuck_projects: project-level recovery.
+  Fails projects whose background extraction task has clearly
+  crashed (stuck in DISCOVERING/EXTRACTING/EXPORTING beyond
+  their timeout). Uses expected_states guards to avoid
+  overwriting concurrent state advances.
+
+These two mechanisms are complementary: the lease reaper
+prepares pages for retry, and the stuck-project watchdog
+fails the project if the background task has died. A project
+that is extraction-active for 60+ minutes with no progress
+is almost certainly a crashed task, not a slow one.
 """
 
 import logging
 import time
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 
 from app.core.config import settings
 from app.db.database import async_session_factory
+from app.models.job import (
+    CrawlPage,
+    CrawlPageState,
+    Job,
+    JobState,
+    Project,
+    ProjectState,
+)
 from app.models.scrape_task import ScrapeTask, TaskState
-from app.models.job import Job, JobState
-from app.services.task_state import transition_to_failed
 from app.services.job_state import transition_job_to_failed
+from app.services.task_state import transition_to_failed
 
 
 logger = logging.getLogger(__name__)
@@ -44,14 +71,18 @@ async def cleanup_stuck_tasks() -> int:
         result = await db.execute(
             select(ScrapeTask).where(
                 ScrapeTask.state == TaskState.PERMISSION_GRANTED,
-                func.coalesce(ScrapeTask.updated_at, ScrapeTask.created_at) < pg_cutoff,
+                func.coalesce(
+                    ScrapeTask.updated_at, ScrapeTask.created_at
+                ) < pg_cutoff,
             )
         )
         stuck_pg = result.scalars().all()
 
         for task in stuck_pg:
             mins = settings.WATCHDOG_PERMISSION_GRANTED_TIMEOUT_MINUTES
-            error_msg = f"Watchdog: Pipeline did not start within {mins}m"
+            error_msg = (
+                f"Watchdog: Pipeline did not start within {mins}m"
+            )
             res = await transition_to_failed(
                 task.id,
                 error_msg,
@@ -63,7 +94,9 @@ async def cleanup_stuck_tasks() -> int:
                     "watchdog.task_reset",
                     extra={
                         "task_id": task.id,
-                        "old_state": TaskState.PERMISSION_GRANTED.value,
+                        "old_state": (
+                            TaskState.PERMISSION_GRANTED.value
+                        ),
                         "timeout_category": "permission_granted",
                     },
                 )
@@ -75,14 +108,18 @@ async def cleanup_stuck_tasks() -> int:
         result = await db.execute(
             select(ScrapeTask).where(
                 ScrapeTask.state == TaskState.SCRAPING,
-                func.coalesce(ScrapeTask.updated_at, ScrapeTask.created_at) < scraping_cutoff,
+                func.coalesce(
+                    ScrapeTask.updated_at, ScrapeTask.created_at
+                ) < scraping_cutoff,
             )
         )
         stuck_scraping = result.scalars().all()
 
         for task in stuck_scraping:
             mins = settings.WATCHDOG_SCRAPING_TIMEOUT_MINUTES
-            error_msg = f"Watchdog: Stuck in SCRAPING for >{mins}m"
+            error_msg = (
+                f"Watchdog: Stuck in SCRAPING for >{mins}m"
+            )
             res = await transition_to_failed(
                 task.id,
                 error_msg,
@@ -106,14 +143,18 @@ async def cleanup_stuck_tasks() -> int:
         result = await db.execute(
             select(ScrapeTask).where(
                 ScrapeTask.state == TaskState.LLM_PROCESSING,
-                func.coalesce(ScrapeTask.updated_at, ScrapeTask.created_at) < llm_cutoff,
+                func.coalesce(
+                    ScrapeTask.updated_at, ScrapeTask.created_at
+                ) < llm_cutoff,
             )
         )
         stuck_llm = result.scalars().all()
 
         for task in stuck_llm:
             mins = settings.WATCHDOG_LLM_TIMEOUT_MINUTES
-            error_msg = f"Watchdog: Stuck in LLM_PROCESSING for >{mins}m"
+            error_msg = (
+                f"Watchdog: Stuck in LLM_PROCESSING for >{mins}m"
+            )
             res = await transition_to_failed(
                 task.id,
                 error_msg,
@@ -125,13 +166,18 @@ async def cleanup_stuck_tasks() -> int:
                     "watchdog.task_reset",
                     extra={
                         "task_id": task.id,
-                        "old_state": TaskState.LLM_PROCESSING.value,
+                        "old_state": (
+                            TaskState.LLM_PROCESSING.value
+                        ),
                         "timeout_category": "llm_processing",
                     },
                 )
 
         if cleaned > 0:
-            logger.info("watchdog.cleanup_complete", extra={"cleaned": cleaned})
+            logger.info(
+                "watchdog.cleanup_complete",
+                extra={"cleaned": cleaned},
+            )
 
     return cleaned
 
@@ -140,7 +186,8 @@ async def cleanup_stuck_jobs() -> int:
     """
     Find and fail analysis jobs stuck in QUEUED or ANALYZING.
 
-    Uses expected_states guard so concurrent state advances are not overwritten.
+    Uses expected_states guard so concurrent state advances
+    are not overwritten.
     Returns number of jobs cleaned up.
     """
     now = datetime.now(timezone.utc)
@@ -153,7 +200,9 @@ async def cleanup_stuck_jobs() -> int:
         result = await db.execute(
             select(Job).where(
                 Job.state == JobState.QUEUED,
-                func.coalesce(Job.updated_at, Job.created_at) < queued_cutoff,
+                func.coalesce(
+                    Job.updated_at, Job.created_at
+                ) < queued_cutoff,
             )
         )
         for job in result.scalars().all():
@@ -180,7 +229,9 @@ async def cleanup_stuck_jobs() -> int:
         result = await db.execute(
             select(Job).where(
                 Job.state == JobState.ANALYZING,
-                func.coalesce(Job.updated_at, Job.created_at) < analyzing_cutoff,
+                func.coalesce(
+                    Job.updated_at, Job.created_at
+                ) < analyzing_cutoff,
             )
         )
         for job in result.scalars().all():
@@ -204,24 +255,253 @@ async def cleanup_stuck_jobs() -> int:
     return cleaned
 
 
+async def cleanup_expired_crawl_page_leases() -> int:
+    """
+    Reset crawl pages whose leases have expired.
+
+    When a worker claims a page, it sets state=FETCHING and
+    lease_expires_at=now()+5min. If the worker process crashes,
+    the lease expires but the page stays in FETCHING indefinitely,
+    blocking the project. This function resets expired leases
+    back to PENDING so the pages can be retried.
+
+    Only operates on pages within projects that are still in
+    active extraction states (DISCOVERING or EXTRACTING).
+    Pages in completed/failed/canceled projects are not touched.
+
+    Returns:
+        Number of pages reset to PENDING.
+    """
+    now = datetime.now(timezone.utc)
+    reset_count = 0
+
+    async with async_session_factory() as db:
+        # Find active project IDs (only reset pages in projects
+        # that are still being worked on)
+        active_project_ids_result = await db.execute(
+            select(Project.id).where(
+                Project.state.in_({
+                    ProjectState.DISCOVERING,
+                    ProjectState.EXTRACTING,
+                })
+            )
+        )
+        active_project_ids = [
+            pid for pid in active_project_ids_result.scalars().all()
+        ]
+
+        if not active_project_ids:
+            return 0
+
+        # Find pages with expired leases in active projects
+        result = await db.execute(
+            select(CrawlPage).where(
+                CrawlPage.state == CrawlPageState.FETCHING,
+                CrawlPage.lease_expires_at < now,
+                CrawlPage.project_id.in_(active_project_ids),
+            )
+        )
+        expired_pages = result.scalars().all()
+
+        for page in expired_pages:
+            page.state = CrawlPageState.PENDING
+            page.lease_expires_at = None
+            page.error = None
+            reset_count += 1
+            logger.info(
+                "watchdog.lease_recovered",
+                extra={
+                    "page_id": page.id,
+                    "project_id": page.project_id,
+                    "url": page.normalized_url,
+                },
+            )
+
+        if reset_count > 0:
+            await db.commit()
+            logger.info(
+                "watchdog.lease_sweep_complete",
+                extra={"pages_reset": reset_count},
+            )
+
+    return reset_count
+
+
+async def cleanup_stuck_projects() -> int:
+    """
+    Find and fail projects stuck in extraction states.
+
+    Covers DISCOVERING, EXTRACTING, and EXPORTING states that
+    have been active beyond their configured timeout. Uses
+    atomic UPDATE with WHERE-clause state guards to avoid
+    overwriting concurrent state advances — the same
+    concurrency-safety pattern as expected_states guards
+    in the task/job transition functions, but applied at
+    the SQL level for projects (which have no dedicated
+    transition function).
+
+    Returns:
+        Number of projects cleaned up.
+    """
+    now = datetime.now(timezone.utc)
+    cleaned = 0
+
+    async with async_session_factory() as db:
+        # DISCOVERING: brief setup state before crawl loop.
+        # If stuck here, the background task failed to start
+        # the crawl loop.
+        discovering_cutoff = now - timedelta(
+            minutes=(
+                settings.WATCHDOG_PROJECT_DISCOVERING_TIMEOUT_MINUTES
+            )
+        )
+        mins_discovering = (
+            settings.WATCHDOG_PROJECT_DISCOVERING_TIMEOUT_MINUTES
+        )
+        stmt = (
+            update(Project)
+            .where(
+                Project.state == ProjectState.DISCOVERING,
+                func.coalesce(
+                    Project.updated_at, Project.created_at
+                ) < discovering_cutoff,
+            )
+            .values(
+                state=ProjectState.FAILED,
+                error=(
+                    f"Watchdog: Project stuck in DISCOVERING "
+                    f"for >{mins_discovering}m"
+                ),
+                error_code="EXTRACTION_FAILED",
+            )
+        )
+        result = await db.execute(stmt)
+        discovering_cleaned = result.rowcount or 0
+        cleaned += discovering_cleaned
+        if discovering_cleaned:
+            logger.info(
+                "watchdog.project_reset",
+                extra={
+                    "count": discovering_cleaned,
+                    "timeout_category": "discovering",
+                },
+            )
+
+        # EXTRACTING: the main crawl/extract loop. A 500-page
+        # extraction with 0.5s delay takes ~4min minimum plus
+        # fetch time. 60min accommodates slow sites and large
+        # crawls.
+        extracting_cutoff = now - timedelta(
+            minutes=(
+                settings.WATCHDOG_PROJECT_EXTRACTING_TIMEOUT_MINUTES
+            )
+        )
+        mins_extracting = (
+            settings.WATCHDOG_PROJECT_EXTRACTING_TIMEOUT_MINUTES
+        )
+        stmt = (
+            update(Project)
+            .where(
+                Project.state == ProjectState.EXTRACTING,
+                func.coalesce(
+                    Project.updated_at, Project.created_at
+                ) < extracting_cutoff,
+            )
+            .values(
+                state=ProjectState.FAILED,
+                error=(
+                    f"Watchdog: Project stuck in EXTRACTING "
+                    f"for >{mins_extracting}m"
+                ),
+                error_code="EXTRACTION_FAILED",
+            )
+        )
+        result = await db.execute(stmt)
+        extracting_cleaned = result.rowcount or 0
+        cleaned += extracting_cleaned
+        if extracting_cleaned:
+            logger.info(
+                "watchdog.project_reset",
+                extra={
+                    "count": extracting_cleaned,
+                    "timeout_category": "extracting",
+                },
+            )
+
+        # EXPORTING: very brief state for quality computation
+        # and export row creation. If stuck here, the background
+        # task crashed during finalization.
+        exporting_cutoff = now - timedelta(
+            minutes=(
+                settings.WATCHDOG_PROJECT_EXPORTING_TIMEOUT_MINUTES
+            )
+        )
+        mins_exporting = (
+            settings.WATCHDOG_PROJECT_EXPORTING_TIMEOUT_MINUTES
+        )
+        stmt = (
+            update(Project)
+            .where(
+                Project.state == ProjectState.EXPORTING,
+                func.coalesce(
+                    Project.updated_at, Project.created_at
+                ) < exporting_cutoff,
+            )
+            .values(
+                state=ProjectState.FAILED,
+                error=(
+                    f"Watchdog: Project stuck in EXPORTING "
+                    f"for >{mins_exporting}m"
+                ),
+                error_code="EXTRACTION_FAILED",
+            )
+        )
+        result = await db.execute(stmt)
+        exporting_cleaned = result.rowcount or 0
+        cleaned += exporting_cleaned
+        if exporting_cleaned:
+            logger.info(
+                "watchdog.project_reset",
+                extra={
+                    "count": exporting_cleaned,
+                    "timeout_category": "exporting",
+                },
+            )
+
+        if cleaned > 0:
+            await db.commit()
+
+    return cleaned
+
+
 async def run_watchdog_once() -> None:
     """Run watchdog cleanup once. Called by background scheduler."""
     try:
         sweep_start = time.monotonic()
         logger.debug(
             "watchdog.sweep_started",
-            extra={"timestamp": datetime.now(timezone.utc).isoformat()},
+            extra={
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            },
         )
         task_cleaned = await cleanup_stuck_tasks()
         job_cleaned = await cleanup_stuck_jobs()
-        duration_ms = round((time.monotonic() - sweep_start) * 1000, 1)
+        lease_recovered = await cleanup_expired_crawl_page_leases()
+        project_cleaned = await cleanup_stuck_projects()
+        duration_ms = round(
+            (time.monotonic() - sweep_start) * 1000, 1
+        )
         logger.info(
             "watchdog.sweep_completed",
             extra={
                 "tasks_reset": task_cleaned,
                 "jobs_reset": job_cleaned,
+                "leases_recovered": lease_recovered,
+                "projects_reset": project_cleaned,
                 "duration_ms": duration_ms,
             },
         )
     except Exception as e:
-        logger.exception("watchdog.error", extra={"error": str(e)})
+        logger.exception(
+            "watchdog.error", extra={"error": str(e)}
+        )
