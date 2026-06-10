@@ -13,15 +13,25 @@ Usage:
     gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker
 """
 
+import logging
+import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_v1_router
 from app.core.config import settings
+from app.core.log_context import (
+    clear_context,
+    set_request_context,
+)
+from app.core.logging_config import configure_logging
 from app.db.database import close_db
+
+logger = logging.getLogger(__name__)
 
 
 # -----------------------------------------------------------------------------
@@ -34,8 +44,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Application lifespan context manager.
     
     This handles startup and shutdown events:
-    - Startup: Initialize connections, warm up caches
-    - Shutdown: Close connections, cleanup resources
+    - Startup: Initialize logging, start scheduler
+    - Shutdown: Stop scheduler, close connections, cleanup
     
     Args:
         app: The FastAPI application instance
@@ -44,23 +54,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         None: Control is passed to the application
     """
     # -------------------------------------------------------------------------
-    # Startup
+    # Startup — configure logging FIRST, before any other imports
     # -------------------------------------------------------------------------
-    print(f"Starting {settings.APP_NAME}...")
-    print(f"Environment: {settings.ENVIRONMENT}")
-    print(f"Debug mode: {settings.DEBUG}")
+    configure_logging()
+
+    logger.info(
+        "app.starting",
+        extra={
+            "app_name": settings.APP_NAME,
+            "environment": settings.ENVIRONMENT,
+            "debug": settings.DEBUG,
+        },
+    )
 
     # Start background scheduler
     from app.core.scheduler import start_scheduler
     start_scheduler()
-    print("Scheduler started")
+    logger.info("scheduler.started")
 
     yield  # Application runs here
 
     # -------------------------------------------------------------------------
     # Shutdown
     # -------------------------------------------------------------------------
-    print(f"Shutting down {settings.APP_NAME}...")
+    logger.info("app.shutting_down", extra={"app_name": settings.APP_NAME})
 
     # Stop scheduler
     from app.core.scheduler import stop_scheduler
@@ -69,7 +86,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Close database connections
     await close_db()
 
-    print("Shutdown complete")
+    logger.info("app.shutdown_complete")
 
 
 # -----------------------------------------------------------------------------
@@ -104,6 +121,37 @@ def create_app() -> FastAPI:
     # Middleware
     # -------------------------------------------------------------------------
 
+    # Request context middleware — binds request_id and logs
+    # HTTP request/response events with timing.
+    @app.middleware("http")
+    async def request_context_middleware(
+        request: Request,
+        call_next,
+    ):
+        request_id = (
+            request.headers.get("X-Request-ID")
+            or str(uuid.uuid4())
+        )
+        set_request_context(request_id=request_id)
+        start = time.monotonic()
+        response = await call_next(request)
+        duration_ms = int(
+            (time.monotonic() - start) * 1000
+        )
+        logger.info(
+            "http.request",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "duration_ms": duration_ms,
+                "request_id": request_id,
+            },
+        )
+        response.headers["X-Request-ID"] = request_id
+        clear_context()
+        return response
+
     # CORS Middleware
     # Allows cross-origin requests from specified origins
     app.add_middleware(
@@ -120,7 +168,9 @@ def create_app() -> FastAPI:
     from app.core.rate_limit import limiter
 
     app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_exception_handler(
+        RateLimitExceeded, _rate_limit_exceeded_handler
+    )
     
     # -------------------------------------------------------------------------
     # Routes
