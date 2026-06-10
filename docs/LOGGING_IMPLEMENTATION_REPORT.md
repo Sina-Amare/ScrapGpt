@@ -3,12 +3,13 @@
 **Branch:** `feature/logging-observability`
 **Date:** 2026-06-10
 **Plan reference:** `docs/LOGGING_AND_OBSERVABILITY_PLAN.md`
+**Remediation:** See `docs/LOGGING_REMEDIATION_REPORT.md` for post-review fixes.
 
 ---
 
 ## 1. Summary
 
-The full 3-layer logging and observability plan has been implemented. All 299 backend tests pass with 0 failures. The implementation follows the plan's architecture (stdlib `logging` + JSON formatter + contextvars) without redesign.
+The full 3-layer logging and observability plan has been implemented and subsequently remediated per the logging review. All 329 backend tests pass with 0 failures. The implementation follows the plan's architecture (stdlib `logging` + JSON formatter + contextvars) without redesign.
 
 ---
 
@@ -16,46 +17,47 @@ The full 3-layer logging and observability plan has been implemented. All 299 ba
 
 ### Layer 1 — Infrastructure
 
-| File                         | Change                                                                                                                                                                                                     | Commit    |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `app/core/log_context.py`    | **New file.** Context variables (`request_id`, `user_id`, `project_id`, `page_id`) with `set_request_context`, `set_task_context`, `bind_user_id`, `set_page_context`, `clear_context`, `get_log_context`. | `a47af80` |
-| `app/core/logging_config.py` | **New file.** `ContextInjectingFilter`, `SecretRedactingFilter`, `DevFormatter`, `JsonFormatter`, `configure_logging()`. Idempotent, stdout-only, `LOG_FORMAT`/`LOG_LEVEL` driven.                         | `a47af80` |
-| `app/main.py`                | Added `configure_logging()` call in lifespan, `request_context_middleware` that sets/clears `request_id` + `user_id` per HTTP request, replaced `print("Startup complete")` with `logger.info`.            | `a47af80` |
-| `app/api/deps.py`            | Added `bind_user_id(user.id)` after successful JWT decode in `get_current_user` and `get_optional_user`.                                                                                                   | `a47af80` |
-| `app/db/database.py`         | Set `echo=False` on `async_session_factory` to suppress SQLAlchemy query logging.                                                                                                                          | `a47af80` |
+| File                         | Change                                                                                                                                                                                                                                                                      | Commit                |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| `app/core/log_context.py`    | **New file.** Context variables (`request_id`, `user_id`, `project_id`, `page_id`) with `set_request_context`, `set_task_context`, `bind_user_id`, `set_page_context`, `clear_context`, `get_log_context`.                                                                  | `a47af80`             |
+| `app/core/logging_config.py` | **New file.** `ContextInjectingFilter`, `SecretRedactingFilter` (with extra-field redaction + URL sanitization), `DevFormatter`, `JsonFormatter` (with `"event"` field), `configure_logging()`, `sanitize_url()`. Idempotent, stdout-only, `LOG_FORMAT`/`LOG_LEVEL` driven. | `a47af80` + `99e2c04` |
+| `app/main.py`                | Added `configure_logging()` call in lifespan, `request_context_middleware` with try/finally pattern that sets/clears `request_id` per HTTP request, logs `http.request_failed` on exceptions, replaced `print("Startup complete")` with `logger.info`.                      | `a47af80` + `99e2c04` |
+| `app/api/deps.py`            | Added `bind_user_id(user.id)` after successful JWT decode in `get_current_user` and `get_optional_user`.                                                                                                                                                                    | `a47af80`             |
+| `app/db/database.py`         | Set `echo=False` on `async_session_factory` to suppress SQLAlchemy query logging.                                                                                                                                                                                           | `a47af80`             |
 
 ### Layer 2 — Security & Correctness
 
 | File                                 | Change                                                                                                                                                                                                                    | Commit    |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `app/api/v1/endpoints/auth.py`       | Added `auth.register_success`, `auth.login_success`, `auth.login_failed`, `auth.refresh_success`, `auth.refresh_failed` events. No credential material in any log.                                                        | `687a8c4` |
-| `app/api/v1/endpoints/providers.py`  | Added `security.key_revealed` audit log in `reveal_provider_key()`.                                                                                                                                                       | `687a8c4` |
+| `app/api/v1/endpoints/auth.py`       | Added `auth.register_success`, `auth.register_failed`, `auth.login_success`, `auth.login_failed`, `auth.token_refresh_success`, `auth.token_refresh_failed` events. No credential material in any log.                    | `687a8c4` |
+| `app/api/v1/endpoints/providers.py`  | Added `security.key_revealed` (WARNING) and `security.key_reveal_failed` (WARNING) audit logs in `reveal_provider_key()`.                                                                                                 | `687a8c4` |
 | `app/services/project_extraction.py` | Replaced 3 silent `except` blocks with explicit `logger.error` calls: `extraction.scope_max_pages_failed`, `extraction.quality_computation_failed`. Added `set_task_context(project_id, user_id)` after project DB fetch. | `687a8c4` |
 | `app/services/frontierpreview.py`    | Replaced silent `except Exception` in fetch with `logger.error("frontier.fetch_failed")`. Added `set_task_context(project_id, user_id)` in `create_frontier_preview`.                                                     | `687a8c4` |
 
 ### Layer 3 — Coverage
 
-| File                                 | Change                                                                                                                                                                                                       | Commit    |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
-| `app/services/crawl_scope.py`        | Added `scope.classified` INFO, `scope.url_excluded` DEBUG, `scope.confirmation_gate_passed` INFO, `scope.confirmation_required` WARNING.                                                                     | `7f1073c` |
-| `app/services/project_extraction.py` | Added `extraction.page_robots_blocked` WARNING, `extraction.page_failed` ERROR, `extraction.records_extracted` DEBUG, `extraction.quality_computed` INFO.                                                    | `4379c2c` |
-| `app/services/frontierpreview.py`    | Added `frontier.fetch_started` DEBUG, `frontier.preview_built` INFO, `frontier.high_exclusion_rate` WARNING.                                                                                                 | `4379c2c` |
-| `app/services/project_preview.py`    | Added `preview.started` DEBUG, `preview.completed` INFO, `preview.selector_failed` WARNING.                                                                                                                  | `4379c2c` |
-| `app/services/watchdog.py`           | Added `watchdog.sweep_started` DEBUG, `watchdog.task_reset` INFO (per-reset with `task_id`, `old_state`, `timeout_category`), `watchdog.job_reset` INFO, `watchdog.sweep_completed` INFO with `duration_ms`. | `4379c2c` |
-| `app/core/scheduler.py`              | Added `_timed_watchdog()` async wrapper with `scheduler.job_started` DEBUG and `scheduler.job_completed` DEBUG with `duration_ms`.                                                                           | `4379c2c` |
-| `app/api/v1/endpoints/projects.py`   | Added `export.started` INFO, `export.completed` INFO (with `record_count`, `duration_ms`), `export.failed` ERROR.                                                                                            | `4379c2c` |
+| File                                 | Change                                                                                                                                                                                                       | Commit                |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------- |
+| `app/services/crawl_scope.py`        | Added `scope.classified` INFO, `scope.url_excluded` DEBUG, `scope.confirmation_gate_passed` INFO (with `project_id`), `scope.confirmation_required` WARNING (with `project_id`).                             | `7f1073c` + `99e2c04` |
+| `app/services/project_extraction.py` | Added `extraction.page_robots_blocked` WARNING, `extraction.page_failed` ERROR, `extraction.records_extracted` DEBUG, `extraction.quality_computed` INFO.                                                    | `4379c2c`             |
+| `app/services/frontierpreview.py`    | Added `frontier.fetch_started` DEBUG, `frontier.preview_built` INFO, `frontier.high_exclusion_rate` WARNING.                                                                                                 | `4379c2c`             |
+| `app/services/project_preview.py`    | Added `preview.started` DEBUG, `preview.completed` INFO, `preview.selector_failed` WARNING.                                                                                                                  | `4379c2c`             |
+| `app/services/watchdog.py`           | Added `watchdog.sweep_started` DEBUG, `watchdog.task_reset` INFO (per-reset with `task_id`, `old_state`, `timeout_category`), `watchdog.job_reset` INFO, `watchdog.sweep_completed` INFO with `duration_ms`. | `4379c2c`             |
+| `app/core/scheduler.py`              | Added `_timed_watchdog()` async wrapper with `scheduler.job_started` DEBUG and `scheduler.job_completed` DEBUG with `duration_ms`.                                                                           | `4379c2c`             |
+| `app/api/v1/endpoints/projects.py`   | Added `export.started` INFO, `export.completed` INFO (with `record_count`, `duration_ms`), `export.failed` ERROR.                                                                                            | `4379c2c`             |
 
 ---
 
 ## 3. New Files
 
-| File                                     | Lines | Purpose                                       |
-| ---------------------------------------- | ----- | --------------------------------------------- |
-| `app/core/log_context.py`                | 88    | Context variable bindings for log correlation |
-| `app/core/logging_config.py`             | 243   | Logging configuration, formatters, filters    |
-| `tests/core/test_log_context.py`         | 62    | Unit tests for log_context module             |
-| `tests/core/test_logging_config.py`      | 323   | Unit tests for logging_config module          |
-| `tests/core/test_logging_integration.py` | 440   | Integration tests for all logging events      |
+| File                                     | Lines | Purpose                                                                             |
+| ---------------------------------------- | ----- | ----------------------------------------------------------------------------------- |
+| `app/core/log_context.py`                | 88    | Context variable bindings for log correlation                                       |
+| `app/core/logging_config.py`             | 381   | Logging configuration, formatters, filters, URL sanitization, extra-field redaction |
+| `tests/core/test_log_context.py`         | 62    | Unit tests for log_context module                                                   |
+| `tests/core/test_logging_config.py`      | 321   | Unit tests for logging_config module                                                |
+| `tests/core/test_logging_integration.py` | 628   | Integration tests for all logging events                                            |
+| `tests/core/test_logging_remediation.py` | 839   | Implementation-level tests for remediation fixes                                    |
 
 ---
 
@@ -66,8 +68,8 @@ The full 3-layer logging and observability plan has been implemented. All 299 ba
 | `app/main.py`                        | Added `configure_logging()` call, request context middleware, replaced print |
 | `app/api/deps.py`                    | Added `bind_user_id()` after JWT decode                                      |
 | `app/db/database.py`                 | Set `echo=False`                                                             |
-| `app/api/v1/endpoints/auth.py`       | Added 5 auth event logs                                                      |
-| `app/api/v1/endpoints/providers.py`  | Added key reveal audit log                                                   |
+| `app/api/v1/endpoints/auth.py`       | Added 6 auth event logs (register, login, token_refresh success/failed)      |
+| `app/api/v1/endpoints/providers.py`  | Added key reveal + key reveal failed audit logs                              |
 | `app/services/project_extraction.py` | Fixed 3 silent excepts, added 4 coverage events, added task context binding  |
 | `app/services/frontierpreview.py`    | Fixed silent except, added 3 coverage events, added task context binding     |
 | `app/services/crawl_scope.py`        | Added 4 scope classification events                                          |
@@ -82,7 +84,7 @@ The full 3-layer logging and observability plan has been implemented. All 299 ba
 
 ```
 $ venv\Scripts\python.exe -m pytest tests/ -x --tb=short -q
-299 passed, 43 warnings in 8.66s
+329 passed, 43 warnings in 6.80s
 ```
 
 **New test files:**
@@ -90,8 +92,9 @@ $ venv\Scripts\python.exe -m pytest tests/ -x --tb=short -q
 - `tests/core/test_log_context.py` — 9 tests (all pass)
 - `tests/core/test_logging_config.py` — 22 tests (all pass)
 - `tests/core/test_logging_integration.py` — 31 tests (all pass)
+- `tests/core/test_logging_remediation.py` — 30 tests (all pass)
 
-**Total new tests: 62**
+**Total new tests: 92**
 
 No regressions in existing test suite.
 
@@ -102,15 +105,17 @@ No regressions in existing test suite.
 | Event                                   | Level   | Source                | Key Fields                                             |
 | --------------------------------------- | ------- | --------------------- | ------------------------------------------------------ |
 | `auth.register_success`                 | INFO    | auth.py               | user_id, email                                         |
+| `auth.register_failed`                  | WARNING | auth.py               | reason                                                 |
 | `auth.login_success`                    | INFO    | auth.py               | user_id, email                                         |
-| `auth.login_failed`                     | WARNING | auth.py               | email, reason                                          |
-| `auth.refresh_success`                  | INFO    | auth.py               | user_id                                                |
-| `auth.refresh_failed`                   | WARNING | auth.py               | reason                                                 |
-| `security.key_revealed`                 | INFO    | providers.py          | user_id, provider_id, provider_name                    |
+| `auth.login_failed`                     | WARNING | auth.py               | reason                                                 |
+| `auth.token_refresh_success`            | INFO    | auth.py               | user_id                                                |
+| `auth.token_refresh_failed`             | WARNING | auth.py               | reason                                                 |
+| `security.key_revealed`                 | WARNING | providers.py          | user_id, provider_config_id, provider_name             |
+| `security.key_reveal_failed`            | WARNING | providers.py          | user_id, provider_config_id, reason                    |
 | `scope.classified`                      | INFO    | crawl_scope.py        | scope_mode, included_count, excluded_count             |
 | `scope.url_excluded`                    | DEBUG   | crawl_scope.py        | url, reason_code                                       |
-| `scope.confirmation_gate_passed`        | INFO    | crawl_scope.py        | scope_mode                                             |
-| `scope.confirmation_required`           | WARNING | crawl_scope.py        | scope_mode, scope_status                               |
+| `scope.confirmation_gate_passed`        | INFO    | crawl_scope.py        | scope_mode, project_id                                 |
+| `scope.confirmation_required`           | WARNING | crawl_scope.py        | scope_mode, scope_status, project_id                   |
 | `frontier.fetch_started`                | DEBUG   | frontierpreview.py    | project_id, url                                        |
 | `frontier.fetch_failed`                 | ERROR   | frontierpreview.py    | project_id, url, error_type                            |
 | `frontier.preview_built`                | INFO    | frontierpreview.py    | project_id, scope_mode, included_count, excluded_count |
@@ -143,13 +148,19 @@ No regressions in existing test suite.
 | `scheduler.stopped`                     | INFO    | scheduler.py          | —                                                      |
 | `scheduler.job_started`                 | DEBUG   | scheduler.py          | job_name                                               |
 | `scheduler.job_completed`               | DEBUG   | scheduler.py          | job_name, duration_ms                                  |
+| `http.request`                          | INFO    | main.py               | method, path, status_code, duration_ms, request_id     |
+| `http.request_failed`                   | ERROR   | main.py               | method, path, duration_ms, request_id, error_type      |
+| `app.starting`                          | INFO    | main.py               | —                                                      |
+| `app.shutting_down`                     | INFO    | main.py               | app_name                                               |
+| `app.shutdown_complete`                 | INFO    | main.py               | —                                                      |
 
 ---
 
 ## 7. Security Guarantees
 
 - **No credential material in logs:** Auth events log `user_id` and `email` only; passwords and tokens are never logged.
-- **Secret redaction backstop:** `SecretRedactingFilter` strips API key patterns (`sk-...`, `key-...`, etc.) from all log messages using `redact_provider_secret()`.
+- **Secret redaction backstop:** `SecretRedactingFilter` strips API key patterns (`sk-...`, `key-...`, etc.) from log messages, args, AND structured extra fields. It also fully redacts keys in `_FULL_REDACT_KEYS` (`api_key`, `token`, `password`, etc.) and sanitizes URL fields in `_URL_KEYS` by stripping query strings and fragments.
+- **URL sanitization:** `sanitize_url()` strips query strings and fragments from URL extra fields to prevent token/session/key leaks via logged URLs. Ad-hoc URL strings (starting with `http://` or `https://`) are also sanitized by a catch-all check.
 - **Key reveal audit trail:** `security.key_revealed` event records who revealed which provider key, without including the key value itself.
 - **No extracted content in logs:** Extraction events log counts and labels only; raw field values and record content stay in the database.
 
@@ -163,7 +174,7 @@ No regressions in existing test suite.
 | `LOG_LEVEL`  | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` | `INFO`  | env var |
 
 - `text` format: human-readable DevFormatter (ISO timestamp, fixed-width level, shortened logger name, key=value extras)
-- `json` format: one JSON object per line, parseable by any log aggregator
+- `json` format: one JSON object per line, parseable by any log aggregator. The event name is in the `"event"` field (not `"message"`), per the structured logging contract.
 
 ---
 
