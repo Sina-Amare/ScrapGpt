@@ -8,7 +8,7 @@ ScrapGPT is a self-hosted, BYOK AI-assisted web data extraction platform. The pr
 
 `URL -> Understand Data -> Choose Fields -> Preview -> Extract -> Results`
 
-The current implementation includes Phase 2.5 (crawl-scope, frontier-preview, trust-signal, paginated-results) and structured logging with correlation IDs. Read `docs/STATUS.md` for the current runnable surface and `docs/product/strategic_redesign.md` for the forward roadmap.
+The current implementation includes Phase 2.5 (crawl-scope, frontier-preview, trust-signal, paginated-results), structured logging with correlation IDs, and reliability hardening (legacy SSRF at all levels, CrawlPage lease reaper, stuck-project watchdog, all-pages-failed semantics). Read `docs/STATUS.md` for the current runnable surface and `docs/product/strategic_redesign.md` for the forward roadmap.
 
 ## Commands
 

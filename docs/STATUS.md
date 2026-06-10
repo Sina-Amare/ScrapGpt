@@ -1,6 +1,6 @@
 # ScrapGPT Status
 
-Last verified: June 10, 2026.
+Last verified: June 10, 2026 (reliability hardening complete).
 
 ## Implemented
 
@@ -120,7 +120,7 @@ npm.cmd run build
 
 Results:
 
-- Backend: **362 passed**, 3 warnings.
+- Backend: **366 passed**, 46 warnings.
 - Frontend tests: **70 passed**.
 - Frontend typecheck, lint, and production build: passed.
 

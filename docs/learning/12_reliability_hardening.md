@@ -159,17 +159,17 @@ Close the remaining reliability and extraction-hardening gaps identified during 
 
 ## Test Results
 
-- **New tests:** 14 tests in `tests/services/test_reliability_hardening.py`
+- **New tests:** 16 tests across `tests/services/test_reliability_hardening.py` and `tests/services/test_scraper.py`
   - 2 SSRF endpoint rejection tests (private IP, loopback)
   - 1 SSRF endpoint acceptance test (valid public URL)
   - 1 executor SSRF defense-in-depth test
-  - 2 scraper redirect validation tests
+  - 2 scraper redirect validation tests (public-to-public allowed, public-to-private blocked)
   - 2 lease reaper tests (expired reset, inactive project skip)
   - 2 stuck-project watchdog tests (DISCOVERING, EXTRACTING)
   - 2 extraction completion semantics tests (all-failed, partial success)
   - 4 config tests (CORS origin, CRAWL_CONCURRENCY description, watchdog timeout defaults, watchdog timeout field info)
 
-- **Backend full suite:** 362 passed, 0 failed, 3 warnings
+- **Backend full suite:** 366 passed, 0 failed, 46 warnings
 - **Frontend full suite:** 70 passed, 0 failed
 
 ---

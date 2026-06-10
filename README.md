@@ -4,7 +4,7 @@ ScrapGPT is a self-hosted, BYOK AI-assisted web data extraction app. It combines
 
 `URL -> Understand Data -> Choose Fields -> Preview -> Extract -> Results`
 
-Current status: Phase 2.5 is implemented and validated for the self-hosted single-instance workflow. See [docs/STATUS.md](docs/STATUS.md) for the current product surface and [docs/reviews/03_phase25_validation.md](docs/reviews/03_phase25_validation.md) for the validation evidence.
+Current status: Phase 2.5 and reliability hardening are complete for the self-hosted single-instance workflow. See [docs/STATUS.md](docs/STATUS.md) for the current product surface and [docs/reviews/03_phase25_validation.md](docs/reviews/03_phase25_validation.md) for the Phase 2.5 E2E validation evidence.
 
 ## What Works Now
 
@@ -23,6 +23,7 @@ Current status: Phase 2.5 is implemented and validated for the self-hosted singl
 - Extraction quality/trust signals.
 - Server-side paginated results via `GET /api/v1/projects/{id}/records-page`.
 - Structured logging with correlation IDs (`request_id`, `user_id`, `project_id`, `page_id`), auth event audit trail, provider key reveal audit, secret redaction pipeline. `LOG_FORMAT=json` for Docker.
+- Reliability hardening: legacy `/scrape` SSRF validated at endpoint, executor, and redirect-hop levels; CrawlPage lease reaper; stuck-project watchdog; all-pages-failed projects transition to FAILED instead of zero-record COMPLETED.
 
 ## Tech Stack
 
@@ -121,7 +122,7 @@ venv\Scripts\python.exe tests\validation\run_validation.py
 
 Last recorded results:
 
-- Backend: 348 passed.
+- Backend: 366 passed.
 - Frontend: 70 passed; typecheck, lint, and build passed.
 - Phase 2.5 validation: 8/8 scenarios passed.
 
