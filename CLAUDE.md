@@ -57,7 +57,7 @@ Notes:
 - PostgreSQL is required for normal runtime and Alembic migrations.
 - Copy `.env.example` to `.env` and set at minimum `DATABASE_URL`, `SECRET_KEY`, and `PROVIDER_KEY_ENCRYPTION_SECRET`.
 - Use `npm.cmd` on Windows when PowerShell blocks `npm.ps1`.
-- Frontend Vite runs on `127.0.0.1:5173`; add the matching origin to `CORS_ORIGINS` if needed.
+- Frontend Vite runs on `127.0.0.1:5173`; the default `CORS_ORIGINS` now includes this origin.
 
 ## Documentation Rules
 
@@ -117,8 +117,9 @@ Avoid putting business logic in endpoints or UI-specific assumptions in services
 
 ## Known Risks
 
-- Legacy `/scrape` is not the primary product path and has known SSRF risk in `app/services/scraper.py`.
-- `CrawlPage.lease_expires_at` is written but no crawler lease reaper exists yet.
+- Legacy `/scrape` is not the primary product path. SSRF validation is now applied at both the endpoint and executor levels, but the legacy scraper (`app/services/scraper.py`) still uses `follow_redirects=True` without per-hop validation. Per-redirect validation in the legacy scraper is deferred.
+- `CrawlPage.lease_expires_at` is swept by the watchdog lease reaper every 60 seconds. Expired FETCHING pages are reset to PENDING within active projects.
+- `CRAWL_CONCURRENCY` is reserved for future use; the extraction executor is sequential.
 - APScheduler runs in-process; multi-worker/multi-host deployment needs an explicit scheduler strategy.
 - Real provider analysis still requires valid user-supplied credentials.
 

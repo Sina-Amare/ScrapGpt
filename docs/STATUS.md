@@ -59,6 +59,15 @@ Last verified: June 10, 2026.
   - `LOG_FORMAT=text` (dev) / `LOG_FORMAT=json` (Docker/prod); `LOG_LEVEL` gates all output.
   - See `docs/learning/11_logging_observability.md` for architecture, invariants, and full event catalog.
 
+- **Reliability hardening (Phase 2.5 closeout):**
+  - Legacy `/scrape` pipeline now has SSRF-safe URL validation at both the endpoint (immediate 400 feedback) and executor (defense-in-depth) levels, plus `robots.txt` checks mirroring the project pipeline.
+  - CrawlPage lease reaper: `cleanup_expired_crawl_page_leases()` resets FETCHING pages with expired leases back to PENDING, only within active projects. Runs every 60 seconds via the watchdog scheduler.
+  - Stuck-project watchdog: `cleanup_stuck_projects()` fails projects stuck in DISCOVERING/EXTRACTING/EXPORTING beyond configurable timeouts (10/60/10 minutes). Uses atomic UPDATE with WHERE-clause state guards for concurrency safety.
+  - Extraction completion semantics: projects where all pages fail or are blocked now transition to FAILED with `error_code = "ALL_PAGES_FAILED"` instead of COMPLETED with zero records. Partial success (some pages extracted) still completes normally with quality assessment.
+  - CORS default now includes `http://127.0.0.1:5173` (Vite dev server origin).
+  - `CRAWL_CONCURRENCY` setting description clarified as "Reserved for future use" since the executor is sequential.
+  - See `docs/learning/12_reliability_hardening.md` for decision log.
+
 ## Current Primary Workflow
 
 1. Start backend and frontend.
@@ -80,21 +89,18 @@ The older Legacy Scrape page still exists for the `/scrape` pipeline, but it is 
 
 - Visual field selection (click-to-extract, iframe seed page, CSS path generator).
 - SSE live progress stream (`/projects/{id}/stream`).
-- Concurrent crawler workers and durable lease-based crash recovery.
+- Concurrent crawler workers (lease-based crash recovery now implemented for single-instance).
 - Template routing, DOM fingerprinting, and selector repair.
 - File-backed export storage beyond streamed CSV/JSON/XLSX responses.
 - Authenticated-content browser sessions.
 - Per-page retry endpoint (`POST /projects/{id}/pages/{page_id}/retry`).
 - Rich DOM summary (microdata, full JSON-LD, multi-sample containers) — `ANALYZER_VERSION` still `"1"`.
-- Watchdog sweep for projects stuck in `DISCOVERING/EXTRACTING/EXPORTING` states.
 - Docker/docker-compose one-command setup.
 - CAPTCHA solving, stealth browser patches, proxy evasion, or challenge bypass (permanent non-goals).
 
 ## Known Issues
 
-- **Legacy `/scrape` pipeline is SSRF-vulnerable.** `app/services/scraper.py` fetches user-supplied URLs without SSRF validation. Mitigation: add `validate_url()` call in `app/api/v1/endpoints/scrape.py`, or remove the legacy pipeline before public deployment.
-- **`CrawlPage.lease_expires_at` is written but never swept.** A process crash mid-extraction leaves pages in `FETCHING` indefinitely. The watchdog reaper for crawl page leases is not yet implemented.
-- **CORS default missing Vite dev origin.** Add `http://localhost:5173` to `CORS_ORIGINS` in `.env` for local frontend development.
+- **DNS rebinding is a known limitation of URL validation.** `validate_url()` blocks private/loopback/metadata IPs at the DNS resolution stage, but a malicious server could rebinding DNS after validation passes. This is a known limitation acknowledged in the URL validator comments, not a new fix item.
 
 ## Verification Snapshot
 
@@ -114,7 +120,7 @@ npm.cmd run build
 
 Results:
 
-- Backend: **348 passed**, 43 warnings.
+- Backend: **362 passed**, 3 warnings.
 - Frontend tests: **70 passed**.
 - Frontend typecheck, lint, and production build: passed.
 
