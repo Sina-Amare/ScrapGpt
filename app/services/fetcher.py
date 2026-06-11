@@ -47,14 +47,11 @@ _STATIC_HEADERS = {
     "Sec-Fetch-User": "?1",
 }
 
-# Playwright launch args that remove the most common automation markers
-# without requiring a third-party stealth library.
-_BROWSER_LAUNCH_ARGS = ["--disable-blink-features=AutomationControlled"]
-
-# Init script injected before any page JS runs to hide navigator.webdriver.
-_HIDE_WEBDRIVER_SCRIPT = (
-    "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-)
+# After domcontentloaded, wait up to this long for network to settle so that
+# JS-rendered content (including Cloudflare JS-challenge redirects) is present
+# before we grab page.content(). Long-polling sites will hit the timeout and
+# return whatever is rendered — that is intentional and safe.
+_BROWSER_SETTLE_MS = 15_000
 
 
 def _format_browser_exception(exc: Exception) -> str:
@@ -238,22 +235,18 @@ def _browser_fetch_sync(url: str) -> FetchResult:
     blocked: list[FetchError] = []
     try:
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(
-                headless=True,
-                args=_BROWSER_LAUNCH_ARGS,
-            )
+            browser = pw.chromium.launch(headless=True)
             try:
                 context = browser.new_context(
                     user_agent=settings.USER_AGENT,
                     java_script_enabled=True,
+                    viewport={"width": 1920, "height": 1080},
                     extra_http_headers={
                         k: v for k, v in _STATIC_HEADERS.items()
                         if k not in ("Accept-Encoding",)
                     },
                 )
                 try:
-                    context.add_init_script(_HIDE_WEBDRIVER_SCRIPT)
-
                     def _route_handler(route: Any) -> None:
                         req_url = route.request.url
                         if not req_url.startswith(("http://", "https://")):
@@ -295,7 +288,14 @@ def _browser_fetch_sync(url: str) -> FetchResult:
                             f"Final URL blocked: {exc}", "BROWSER_URL_BLOCKED"
                         ) from exc
 
+                    # Wait for JS-rendered content to settle (covers CF JS-challenge
+                    # redirects and lazy-loaded content). Timeout is non-fatal.
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=_BROWSER_SETTLE_MS)
+                    except Exception:
+                        pass
                     html_raw = page.content().encode("utf-8")
+                    final_url = page.url
                     elapsed = int((time.monotonic() - t0) * 1000)
                     return _browser_result_from_html(
                         html_raw=html_raw,
@@ -332,22 +332,18 @@ async def _browser_fetch_async(url: str) -> FetchResult:
     blocked: list[FetchError] = []
     try:
         async with async_playwright() as pw:
-            browser = await pw.chromium.launch(
-                headless=True,
-                args=_BROWSER_LAUNCH_ARGS,
-            )
+            browser = await pw.chromium.launch(headless=True)
             try:
                 context = await browser.new_context(
                     user_agent=settings.USER_AGENT,
                     java_script_enabled=True,
+                    viewport={"width": 1920, "height": 1080},
                     extra_http_headers={
                         k: v for k, v in _STATIC_HEADERS.items()
                         if k not in ("Accept-Encoding",)
                     },
                 )
                 try:
-                    await context.add_init_script(_HIDE_WEBDRIVER_SCRIPT)
-
                     # SSRF prevention: intercept every outgoing request and block
                     # private / metadata IPs before the connection is established.
                     #
@@ -404,7 +400,14 @@ async def _browser_fetch_async(url: str) -> FetchResult:
                             f"Final URL blocked: {exc}", "BROWSER_URL_BLOCKED"
                         ) from exc
 
+                    # Wait for JS-rendered content to settle (covers CF JS-challenge
+                    # redirects and lazy-loaded content). Timeout is non-fatal.
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=_BROWSER_SETTLE_MS)
+                    except Exception:
+                        pass
                     html_raw = (await page.content()).encode("utf-8")
+                    final_url = page.url
                 finally:
                     await context.close()
             finally:

@@ -60,6 +60,7 @@ from app.services.job_state import transition_job_to_canceled
 from app.services.project_lifecycle import delete_project_tree
 from app.services.project_extraction import count_records, execute_project_extraction, list_records, start_project_extraction
 from app.services.project_preview import create_preview, latest_preview
+from app.services.project_retry import RetryError, retry_failed_project
 from app.services.project_status import confidence_label, detected_type, product_status_for
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
@@ -734,6 +735,31 @@ async def cancel_project(
     if not result.success or not result.job:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=result.error or "Cancellation failed")
     return await _project_response(db, result.job)
+
+
+@router.post("/{project_id}/retry", response_model=ProjectResponse, summary="Retry a failed project")
+async def retry_project(
+    project_id: int,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProjectResponse:
+    project = await _owned_project(db, user, project_id)
+    try:
+        project, provider = await retry_failed_project(db, project, user)
+    except RetryError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"message": str(exc), "error_code": exc.error_code},
+        ) from exc
+    await db.commit()
+    if provider is not None:
+        background_tasks.add_task(
+            execute_job_pipeline,
+            job_id=project.id,
+            provider_config_id=provider.id,
+        )
+    return await _project_response(db, project)
 
 
 @router.delete(

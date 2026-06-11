@@ -286,6 +286,14 @@ export function ProjectDetailPage() {
     }
   });
 
+  const retryMutation = useMutation({
+    mutationFn: () => api.retryProject(projectId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+
   const previewMutation = useMutation({
     mutationFn: () => api.previewProject(projectId),
     onSuccess: () => {
@@ -413,7 +421,27 @@ export function ProjectDetailPage() {
                 <ConfidenceBar value={project.confidence} />
               </div>
             </div>
-            {project.error ? <div className="mt-5"><Alert tone="danger">{project.error}</Alert></div> : null}
+            {project.error ? (
+              <div className="mt-5 flex flex-col gap-2">
+                <Alert tone="danger">
+                  <div className="flex items-start justify-between gap-4">
+                    <span>{project.error}</span>
+                    {project.system_state === "FAILED" && (
+                      <Button
+                        variant="secondary"
+                        onClick={() => retryMutation.mutate()}
+                        disabled={retryMutation.isPending}
+                      >
+                        {retryMutation.isPending ? "Retrying…" : "Retry"}
+                      </Button>
+                    )}
+                  </div>
+                </Alert>
+                {retryMutation.error && (
+                  <Alert tone="danger">{retryMutation.error.message}</Alert>
+                )}
+              </div>
+            ) : null}
             {project.warnings.length ? (
               <div className="mt-5">
                 <Alert tone="info">

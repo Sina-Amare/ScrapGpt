@@ -317,6 +317,149 @@ async def test_extract_anyway_bypasses_zero_preview_gate(async_client, app, monk
     assert response.json()["system_state"] == "DISCOVERING"
 
 
+def _failed_project(*, with_analysis: bool = False) -> Project:
+    project = _project()
+    project.state = ProjectState.FAILED
+    project.error = "Something went wrong"
+    project.error_code = "LLM_ANALYSIS_FAILED"
+    if with_analysis:
+        project.analysis = {"candidate_fields": []}
+    return project
+
+
+def _fake_spec(spec_id: int = 1, *, updated_at: datetime | None = None) -> ExtractionSpec:
+    return ExtractionSpec(
+        id=spec_id,
+        project_id=1,
+        mode=ExtractionMode.STRUCTURED,
+        fields=[],
+        content_config={},
+        url_patterns=[],
+        page_limit=500,
+        export_format="csv",
+        created_at=datetime.now(timezone.utc),
+        updated_at=updated_at,
+    )
+
+
+def _fake_preview(*, spec_id: int = 1, created_at: datetime | None = None) -> PreviewResult:
+    return PreviewResult(
+        id=1,
+        project_id=1,
+        spec_id=spec_id,
+        sample_records=[{"title": "test"}],
+        warnings=[],
+        missing_fields=[],
+        quality_summary={"sample_record_count": 1},
+        created_at=created_at or datetime.now(timezone.utc),
+    )
+
+
+@pytest.mark.asyncio
+async def test_retry_analysis_failure_requeues(async_client, app, monkeypatch):
+    """FAILED project with no analysis resets to QUEUED and re-queues the pipeline."""
+    project = _failed_project(with_analysis=False)
+    fake_provider = ProviderConfig(id=1, user_id=1, name="Default", provider="openai", model="gpt")
+
+    executed = []
+
+    async def _fake_execute(*, job_id, provider_config_id):
+        executed.append((job_id, provider_config_id))
+
+    async def _fake_resolve(db, user, provider_config_id):
+        return fake_provider
+
+    monkeypatch.setattr("app.services.project_retry.resolve_provider_for_user", _fake_resolve)
+    monkeypatch.setattr("app.api.v1.endpoints.projects.execute_job_pipeline", _fake_execute)
+    app.dependency_overrides[deps.get_current_user] = lambda: _user()
+    app.dependency_overrides[deps.get_db] = lambda: (yield FakeProjectSession(project))
+
+    response = await async_client.post("/api/v1/projects/1/retry")
+
+    assert response.status_code == 200
+    assert response.json()["system_state"] == "QUEUED"
+    assert len(executed) == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_extraction_failure_with_fresh_preview(async_client, app, monkeypatch):
+    """FAILED project with analysis + fresh matching preview resets to PREVIEW_READY."""
+    project = _failed_project(with_analysis=True)
+    project.error_code = "ALL_PAGES_FAILED"
+    spec_time = datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+    preview_time = datetime(2025, 1, 1, 11, 0, 0, tzinfo=timezone.utc)
+    spec = _fake_spec(updated_at=spec_time)
+    preview = _fake_preview(spec_id=spec.id, created_at=preview_time)
+
+    async def _latest_spec(db, project_id):
+        return spec
+
+    async def _latest_preview(db, project_id):
+        return preview
+
+    async def _ensure_spec(db, project):
+        return spec
+
+    monkeypatch.setattr("app.services.project_retry.latest_spec", _latest_spec)
+    monkeypatch.setattr("app.services.project_retry.latest_preview", _latest_preview)
+    # _project_response calls ensure_default_spec and latest_preview; patch both.
+    monkeypatch.setattr("app.api.v1.endpoints.projects.ensure_default_spec", _ensure_spec)
+    monkeypatch.setattr("app.api.v1.endpoints.projects.latest_preview", _latest_preview)
+    app.dependency_overrides[deps.get_current_user] = lambda: _user()
+    app.dependency_overrides[deps.get_db] = lambda: (yield FakeProjectSession(project))
+
+    response = await async_client.post("/api/v1/projects/1/retry")
+
+    assert response.status_code == 200
+    assert response.json()["system_state"] == "PREVIEW_READY"
+
+
+@pytest.mark.asyncio
+async def test_retry_extraction_failure_stale_preview(async_client, app, monkeypatch):
+    """FAILED project with analysis but stale preview resets to ANALYSIS_READY."""
+    project = _failed_project(with_analysis=True)
+    project.error_code = "NO_RECORDS_EXTRACTED"
+    spec_time = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)  # spec updated AFTER preview
+    preview_time = datetime(2025, 1, 1, 11, 0, 0, tzinfo=timezone.utc)
+    spec = _fake_spec(updated_at=spec_time)
+    preview = _fake_preview(spec_id=spec.id, created_at=preview_time)
+
+    async def _latest_spec(db, project_id):
+        return spec
+
+    async def _latest_preview(db, project_id):
+        return preview
+
+    async def _ensure_spec(db, project):
+        return spec
+
+    monkeypatch.setattr("app.services.project_retry.latest_spec", _latest_spec)
+    monkeypatch.setattr("app.services.project_retry.latest_preview", _latest_preview)
+    # _project_response calls ensure_default_spec and latest_preview; patch both.
+    monkeypatch.setattr("app.api.v1.endpoints.projects.ensure_default_spec", _ensure_spec)
+    monkeypatch.setattr("app.api.v1.endpoints.projects.latest_preview", _latest_preview)
+    app.dependency_overrides[deps.get_current_user] = lambda: _user()
+    app.dependency_overrides[deps.get_db] = lambda: (yield FakeProjectSession(project))
+
+    response = await async_client.post("/api/v1/projects/1/retry")
+
+    assert response.status_code == 200
+    assert response.json()["system_state"] == "ANALYSIS_READY"
+
+
+@pytest.mark.asyncio
+async def test_retry_non_failed_project_returns_409(async_client, app):
+    """Retrying a non-FAILED project returns 409."""
+    project = _project()
+    project.state = ProjectState.COMPLETED
+    app.dependency_overrides[deps.get_current_user] = lambda: _user()
+    app.dependency_overrides[deps.get_db] = lambda: (yield FakeProjectSession(project))
+
+    response = await async_client.post("/api/v1/projects/1/retry")
+
+    assert response.status_code == 409
+
+
 class _DeleteFailingSession(FakeProjectSession):
     """Session that raises on the first DELETE statement to simulate a DB error."""
 

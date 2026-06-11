@@ -381,6 +381,10 @@ export const api = {
     return apiRequest<ProjectResponse>(`/projects/${id}/cancel`, { method: "POST" });
   },
 
+  retryProject(id: number): Promise<ProjectResponse> {
+    return apiRequest<ProjectResponse>(`/projects/${id}/retry`, { method: "POST" });
+  },
+
   deleteProject(id: number): Promise<void> {
     return apiRequest<void>(`/projects/${id}`, { method: "DELETE" });
   },

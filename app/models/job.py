@@ -151,7 +151,11 @@ VALID_PROJECT_TRANSITIONS: dict[ProjectState, list[ProjectState]] = {
     ],
     ProjectState.PAUSED: [ProjectState.DISCOVERING, ProjectState.EXTRACTING, ProjectState.FAILED, ProjectState.CANCELED],
     ProjectState.COMPLETED: [ProjectState.DISCOVERING],
-    ProjectState.FAILED: [],
+    ProjectState.FAILED: [
+        ProjectState.QUEUED,          # re-run full analysis (analysis itself failed)
+        ProjectState.ANALYSIS_READY,  # reset for re-extraction (analysis was OK)
+        ProjectState.PREVIEW_READY,   # reset for re-extraction (preview was also OK)
+    ],
     ProjectState.CANCELED: [],
 }
 

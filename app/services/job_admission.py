@@ -58,7 +58,7 @@ async def admit_job(
     # ------------------------------------------------------------------
     # Step 1: resolve provider config — fail fast before locking
     # ------------------------------------------------------------------
-    provider_config = await _resolve_provider(db, user, provider_config_id)
+    provider_config = await resolve_provider_for_user(db, user, provider_config_id)
     if provider_config is None:
         return JobAdmissionError(
             error_type=JobAdmissionErrorType.NO_PROVIDER_CONFIGURED,
@@ -125,7 +125,7 @@ async def admit_job(
         raise
 
 
-async def _resolve_provider(
+async def resolve_provider_for_user(
     db: AsyncSession, user: User, provider_config_id: int | None
 ) -> ProviderConfig | None:
     """Return the provider config to use: explicit ID > user default > first owned."""

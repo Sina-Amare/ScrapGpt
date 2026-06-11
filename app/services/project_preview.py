@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.job import ExtractionSpec, PreviewResult, Project, ProjectState
-from app.services.anti_bot import anti_bot_challenge_reason
+from app.services.anti_bot import CHALLENGE_MESSAGES, anti_bot_challenge_reason
 from app.services.extractor import extract_records_from_html
 from app.services.fetcher import FetchError, fetch_url
 from app.services.robots_service import RobotsResult, check_robots
@@ -103,7 +103,9 @@ async def build_selector_preview_payload(project: Project, spec: ExtractionSpec)
         raise RuntimeError(str(exc)) from exc
     challenge_reason = anti_bot_challenge_reason(fetched.html, fetched.final_url)
     if challenge_reason:
-        raise RuntimeError(f"anti-bot challenge detected: {challenge_reason}")
+        raise RuntimeError(
+            CHALLENGE_MESSAGES.get(challenge_reason, f"Anti-bot challenge detected: {challenge_reason}")
+        )
 
     extracted = extract_records_from_html(
         fetched.html,

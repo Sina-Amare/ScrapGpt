@@ -2,6 +2,23 @@
 
 from __future__ import annotations
 
+# Human-readable messages for each challenge type, shown in error alerts and logs.
+CHALLENGE_MESSAGES: dict[str, str] = {
+    "cloudflare_challenge": (
+        "Cloudflare blocked the request. This site requires a verified browser "
+        "session that ScrapGPT cannot automatically provide. "
+        "Authenticated session support is not available yet."
+    ),
+    "cloudflare_turnstile": (
+        "Cloudflare Turnstile challenge detected. This requires human "
+        "interaction and cannot be automated."
+    ),
+    "captcha_challenge": (
+        "CAPTCHA detected. This page requires human verification and cannot "
+        "be scraped automatically."
+    ),
+}
+
 
 def anti_bot_challenge_reason(html: str, final_url: str | None = None) -> str | None:
     """Return a reason when fetched HTML appears to be an anti-bot challenge.
