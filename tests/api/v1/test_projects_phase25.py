@@ -248,7 +248,9 @@ async def test_extract_returns_409_when_scope_not_confirmed(async_client, app, m
         return spec
 
     async def fake_latest_preview(db, project_id):
-        return MagicMock()  # preview exists so that gating doesn't block first
+        m = MagicMock()
+        m.sample_records = [{"id": 1}]  # non-empty to pass ZERO_PREVIEW_RECORDS gate
+        return m
 
     async def fake_start_extraction(db, project, spec, *, allow_unconfirmed=False):
         raise ScopeConfirmationError(spec.crawl_scope, code="SCOPE_NOT_CONFIRMED")

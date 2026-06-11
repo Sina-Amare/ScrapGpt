@@ -659,7 +659,7 @@ async def test_execute_project_extraction_all_pages_failed_real_path(
         robots_allowed,
     )
 
-    async def fake_fetch_url(url, render_mode):
+    async def fake_fetch_url(url, render_mode, **kwargs):
         raise FetchError("boom", "FETCH_FAILED")
 
     monkeypatch.setattr(project_extraction, "fetch_url", fake_fetch_url)
@@ -711,7 +711,7 @@ async def test_execute_project_extraction_blocks_cloudflare_challenge(
     async def robots_allowed(url):
         return SimpleNamespace(result=RobotsResult.ALLOWED, reason=None)
 
-    async def fake_fetch_url(url, render_mode):
+    async def fake_fetch_url(url, render_mode, **kwargs):
         return SimpleNamespace(
             html=(
                 "<html><title>Just a moment...</title>"
@@ -788,7 +788,7 @@ async def test_execute_project_extraction_fails_structured_zero_records(
     async def robots_allowed(url):
         return SimpleNamespace(result=RobotsResult.ALLOWED, reason=None)
 
-    async def fake_fetch_url(url, render_mode):
+    async def fake_fetch_url(url, render_mode, **kwargs):
         return SimpleNamespace(
             html="<html><body><p>No matching listing rows here.</p></body></html>",
             final_url=url,
@@ -860,7 +860,7 @@ async def test_execute_project_extraction_does_not_complete_failed_project(
     async def robots_allowed(url):
         return SimpleNamespace(result=RobotsResult.ALLOWED, reason=None)
 
-    async def fake_fetch_url(url, render_mode):
+    async def fake_fetch_url(url, render_mode, **kwargs):
         return SimpleNamespace(
             html="<html><body>No records</body></html>",
             final_url=url,

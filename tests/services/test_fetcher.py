@@ -49,6 +49,7 @@ _FAKE_SETTINGS = type("S", (), {
     "MAX_REDIRECTS": 5,
     "MAX_FETCH_BYTES": 2 * 1024 * 1024,
     "ALLOW_PRIVATE_NETWORK_URLS": True,
+    "FLARESOLVERR_URL": "",
 })()
 
 
@@ -188,10 +189,11 @@ async def test_browser_fetch_enforces_max_fetch_bytes(monkeypatch):
     fake_page.url = "https://example.com"
     fake_page.goto = AsyncMock(return_value=MagicMock(status=200))
     fake_page.content = AsyncMock(return_value=big_html)
+    fake_page.add_init_script = AsyncMock()
+    fake_page.wait_for_load_state = AsyncMock()
 
     fake_context = MagicMock()
     fake_context.route = AsyncMock()
-    fake_context.add_init_script = AsyncMock()
     fake_context.new_page = AsyncMock(return_value=fake_page)
     fake_context.close = AsyncMock()
 
@@ -242,6 +244,8 @@ async def test_browser_fetch_blocks_private_ip_via_route(monkeypatch):
     fake_page = MagicMock()
     fake_page.url = "https://example.com"
     fake_page.content = AsyncMock(return_value="<html></html>")
+    fake_page.add_init_script = AsyncMock()
+    fake_page.wait_for_load_state = AsyncMock()
 
     async def mock_goto(url, **kwargs):
         # Simulate Playwright calling the route handler for a request to a private IP
@@ -261,7 +265,6 @@ async def test_browser_fetch_blocks_private_ip_via_route(monkeypatch):
 
     fake_context = MagicMock()
     fake_context.route = capture_route
-    fake_context.add_init_script = AsyncMock()
     fake_context.new_page = AsyncMock(return_value=fake_page)
     fake_context.close = AsyncMock()
 
@@ -308,10 +311,11 @@ async def test_browser_fetch_blank_exception_has_actionable_message(monkeypatch)
 
     fake_page = MagicMock()
     fake_page.goto = AsyncMock(side_effect=Exception())
+    fake_page.add_init_script = AsyncMock()
+    fake_page.wait_for_load_state = AsyncMock()
 
     fake_context = MagicMock()
     fake_context.route = AsyncMock()
-    fake_context.add_init_script = AsyncMock()
     fake_context.new_page = AsyncMock(return_value=fake_page)
     fake_context.close = AsyncMock()
 
@@ -365,7 +369,7 @@ async def test_browser_fetch_uses_threaded_path_when_required(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.fetcher._browser_fetch_sync",
-        lambda url: expected,
+        lambda url, cookies=None: expected,
     )
 
     from app.services.fetcher import _browser_fetch
@@ -404,7 +408,7 @@ async def test_cloudflare_js_challenge_triggers_browser_retry(monkeypatch):
     import httpx
     from unittest.mock import AsyncMock
 
-    from app.services.fetcher import FetchResult, RenderModeUsed
+    from app.services.fetcher import FetchError, FetchResult, RenderModeUsed
 
     browser_result = FetchResult(
         html=_REAL_PAGE_HTML.decode(),
@@ -416,9 +420,17 @@ async def test_cloudflare_js_challenge_triggers_browser_retry(monkeypatch):
         fetch_metadata={},
     )
     monkeypatch.setattr(
-        httpx, "AsyncClient", lambda **kw: _FakeClient(_FakeResponse(body=_CF_CHALLENGE_HTML))
+        httpx, "AsyncClient",
+        lambda **kw: _FakeClient(_FakeResponse(body=_CF_CHALLENGE_HTML)),
     )
     monkeypatch.setattr("app.services.fetcher.settings", _FAKE_SETTINGS)
+    # Camoufox is not available in unit tests — skip straight to Playwright
+    monkeypatch.setattr(
+        "app.services.fetcher._camoufox_fetch",
+        AsyncMock(
+            side_effect=FetchError("camoufox not installed", "BROWSER_UNAVAILABLE")
+        ),
+    )
     monkeypatch.setattr(
         "app.services.fetcher._browser_fetch",
         AsyncMock(return_value=browser_result),
@@ -475,17 +487,26 @@ async def test_cloudflare_turnstile_not_retried_with_browser(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_cloudflare_challenge_browser_unavailable_falls_back_to_static(monkeypatch):
-    """If browser is unavailable, fall back to the static CF challenge page and record it."""
+async def test_cloudflare_challenge_browser_unavailable_falls_back_to_static(
+    monkeypatch,
+):
+    """If browser is unavailable, fall back to the static CF challenge page."""
     import httpx
     from unittest.mock import AsyncMock
 
     from app.services.fetcher import FetchError
 
     monkeypatch.setattr(
-        httpx, "AsyncClient", lambda **kw: _FakeClient(_FakeResponse(body=_CF_CHALLENGE_HTML))
+        httpx, "AsyncClient",
+        lambda **kw: _FakeClient(_FakeResponse(body=_CF_CHALLENGE_HTML)),
     )
     monkeypatch.setattr("app.services.fetcher.settings", _FAKE_SETTINGS)
+    monkeypatch.setattr(
+        "app.services.fetcher._camoufox_fetch",
+        AsyncMock(
+            side_effect=FetchError("camoufox not installed", "BROWSER_UNAVAILABLE")
+        ),
+    )
     monkeypatch.setattr(
         "app.services.fetcher._browser_fetch",
         AsyncMock(side_effect=FetchError("no playwright", "BROWSER_UNAVAILABLE")),

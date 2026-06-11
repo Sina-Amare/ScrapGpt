@@ -1,4 +1,20 @@
-"""HTTP fetcher: static httpx with optional Playwright browser fallback."""
+"""HTTP fetcher: static httpx + stealth browser cascade.
+
+Fetch cascade (AUTO mode):
+  1. Static httpx — fastest, no JS, no fingerprint
+  2. Camoufox  — stealth Firefox, best CF-JS-challenge evasion  (optional install)
+  3. Playwright + stealth patches — headless Chrome with anti-fingerprint patches
+  4. FlareSolverr — Docker service that runs a stealth browser externally (optional)
+
+BROWSER mode always starts at step 2 and falls through to 4.
+STATIC mode skips all browser steps.
+
+Install stealth backends (all optional, graceful fallback if missing):
+  pip install playwright && python -m playwright install chromium
+  pip install playwright-stealth
+  pip install "camoufox[geoip]" && python -m camoufox fetch
+  docker run -d -p 8191:8191 flaresolverr/flaresolverr:latest  # then set FLARESOLVERR_URL
+"""
 
 from __future__ import annotations
 
@@ -14,7 +30,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.services.anti_bot import anti_bot_challenge_reason
+from app.services.anti_bot import AUTO_SOLVABLE_CHALLENGES, anti_bot_challenge_reason
 from app.services.url_validator import (
     URLValidationError,
     validate_redirect_target,
@@ -25,13 +41,11 @@ logger = logging.getLogger(__name__)
 
 _CONTENT_TYPE_ALLOWLIST = ("text/html", "text/plain", "application/xhtml+xml")
 
-# Challenge types that Playwright can resolve by executing the JS challenge.
-# Turnstile and CAPTCHA challenges require human interaction — skip those.
-_BROWSER_RETRYABLE_CHALLENGES = frozenset({"cloudflare_challenge"})
+# AUTO_SOLVABLE_CHALLENGES (imported from anti_bot) lists challenge types a
+# stealth browser can resolve by executing the JS.  Turnstile / CAPTCHA need
+# a solving service — waiting on them is pointless.
 
-# Full browser-like headers sent with every static request.
-# Sending only User-Agent triggers CDN fingerprinting heuristics on sites
-# like OATD that use Cloudflare.
+# Full browser-like headers for static requests.
 _STATIC_HEADERS = {
     "Accept": (
         "text/html,application/xhtml+xml,application/xml;"
@@ -47,11 +61,100 @@ _STATIC_HEADERS = {
     "Sec-Fetch-User": "?1",
 }
 
-# After domcontentloaded, wait up to this long for network to settle so that
-# JS-rendered content (including Cloudflare JS-challenge redirects) is present
-# before we grab page.content(). Long-polling sites will hit the timeout and
-# return whatever is rendered — that is intentional and safe.
+# Extra HTTP headers for Playwright contexts (no Accept-Encoding — browser handles it).
+_BROWSER_HEADERS = {
+    k: v for k, v in _STATIC_HEADERS.items() if k not in ("Accept-Encoding",)
+}
+
 _BROWSER_SETTLE_MS = 15_000
+
+# Built-in stealth init script injected into every Playwright Chromium page.
+# Removes the most obvious automation fingerprints without any external deps.
+# playwright-stealth (if installed) adds deeper patches on top of this.
+_STEALTH_INIT_SCRIPT = r"""
+() => {
+    // Remove navigator.webdriver — the single biggest tell
+    try {
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined,
+            configurable: true,
+        });
+    } catch (_) {}
+
+    // Inject a realistic window.chrome object (absent in headless Chrome)
+    if (!window.chrome) {
+        window.chrome = {
+            app: { isInstalled: false },
+            runtime: {
+                id: undefined,
+                connect: () => {},
+                sendMessage: () => {},
+                PlatformOs: { WIN: 'win', MAC: 'mac', LINUX: 'linux', ANDROID: 'android', CROS: 'cros' },
+                PlatformArch: { ARM: 'arm', ARM64: 'arm64', X86_32: 'x86-32', X86_64: 'x86-64' },
+            },
+            loadTimes: () => ({}),
+            csi: () => ({}),
+        };
+    }
+
+    // Headless Chrome reports 0 plugins; real browsers expose at least three.
+    if (!navigator.plugins || navigator.plugins.length === 0) {
+        const PLUGINS = [
+            { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+            { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+            { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
+        ];
+        Object.defineProperty(navigator, 'plugins', {
+            get: () => {
+                const arr = Object.assign([], PLUGINS);
+                arr.refresh = () => {};
+                arr.item = (i) => arr[i] ?? null;
+                arr.namedItem = (n) => arr.find(p => p.name === n) ?? null;
+                return arr;
+            },
+        });
+    }
+
+    // Realistic MIME types
+    if (!navigator.mimeTypes || navigator.mimeTypes.length === 0) {
+        Object.defineProperty(navigator, 'mimeTypes', {
+            get: () => {
+                const arr = Object.assign([], [
+                    { type: 'application/pdf', description: 'Portable Document Format', suffixes: 'pdf' },
+                    { type: 'text/pdf', description: '', suffixes: 'pdf' },
+                ]);
+                arr.item = (i) => arr[i] ?? null;
+                arr.namedItem = (n) => arr.find(m => m.type === n) ?? null;
+                return arr;
+            },
+        });
+    }
+
+    // Languages — headless often returns an empty array
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+
+    // Permissions API — override so notifications check looks real
+    if (window.Permissions && window.Permissions.prototype.query) {
+        const _orig = window.Permissions.prototype.query.bind(window.Permissions.prototype);
+        window.Permissions.prototype.query = function (params) {
+            if (params.name === 'notifications') {
+                return Promise.resolve({ state: (typeof Notification !== 'undefined' ? Notification.permission : 'default') });
+            }
+            return _orig(params);
+        };
+    }
+
+    // Hardware & screen — match the viewport (1920×1080) and a typical desktop
+    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+    Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+    Object.defineProperty(screen, 'width', { get: () => 1920 });
+    Object.defineProperty(screen, 'height', { get: () => 1080 });
+    Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
+    Object.defineProperty(screen, 'availHeight', { get: () => 1040 });
+    Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+    Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
+}
+"""
 
 
 def _format_browser_exception(exc: Exception) -> str:
@@ -70,6 +173,8 @@ class FetchError(Exception):
 class RenderModeUsed(str, Enum):
     STATIC = "STATIC"
     BROWSER = "BROWSER"
+    CAMOUFOX = "CAMOUFOX"
+    FLARESOLVERR = "FLARESOLVERR"
 
 
 @dataclass
@@ -89,6 +194,7 @@ def _browser_result_from_html(
     final_url: str,
     status: int,
     elapsed_ms: int,
+    render_mode: RenderModeUsed = RenderModeUsed.BROWSER,
 ) -> FetchResult:
     original_bytes = len(html_raw)
     truncated = original_bytes > settings.MAX_FETCH_BYTES
@@ -102,7 +208,7 @@ def _browser_result_from_html(
         html=html,
         content_hash=content_hash,
         final_url=final_url,
-        render_mode_used=RenderModeUsed.BROWSER,
+        render_mode_used=render_mode,
         status_code=status,
         elapsed_ms=elapsed_ms,
         fetch_metadata={
@@ -114,12 +220,12 @@ def _browser_result_from_html(
     )
 
 
-async def _static_fetch(url: str) -> FetchResult:
-    """Fetch a URL with httpx, manually validating each redirect.
+# ---------------------------------------------------------------------------
+# Static fetch
+# ---------------------------------------------------------------------------
 
-    One AsyncClient is created for the full redirect chain to reuse the
-    underlying connection pool and avoid a new TLS handshake per hop.
-    """
+async def _static_fetch(url: str) -> FetchResult:
+    """Fetch with httpx, manually validating each redirect hop."""
     current_url = url
     hops = 0
     t0 = time.monotonic()
@@ -157,9 +263,7 @@ async def _static_fetch(url: str) -> FetchResult:
                 hops += 1
                 continue
 
-            # Final response
             status = resp.status_code
-
             ct = resp.headers.get("content-type", "")
             if not any(allowed in ct for allowed in _CONTENT_TYPE_ALLOWLIST):
                 raise FetchError(
@@ -175,7 +279,6 @@ async def _static_fetch(url: str) -> FetchResult:
             truncated = original_bytes > settings.MAX_FETCH_BYTES
             if truncated:
                 body = body[: settings.MAX_FETCH_BYTES]
-            analyzed_bytes = len(body)
 
             html = body.decode("utf-8", errors="replace")
             content_hash = hashlib.sha256(html.encode("utf-8")).hexdigest()
@@ -192,12 +295,16 @@ async def _static_fetch(url: str) -> FetchResult:
                     "hops": hops,
                     "content_type": ct,
                     "original_bytes": original_bytes,
-                    "analyzed_bytes": analyzed_bytes,
+                    "analyzed_bytes": len(body),
                     "truncated": truncated,
                     "elapsed_ms": elapsed,
                 },
             )
 
+
+# ---------------------------------------------------------------------------
+# Windows event loop helpers
+# ---------------------------------------------------------------------------
 
 def _should_use_threaded_browser_fetch() -> bool:
     if sys.platform != "win32":
@@ -219,18 +326,57 @@ def _ensure_windows_proactor_policy_for_playwright() -> None:
         asyncio.set_event_loop_policy(policy_factory())
 
 
+# ---------------------------------------------------------------------------
+# SSRF route handler factory (shared by Playwright + camoufox)
+# ---------------------------------------------------------------------------
+
+def _make_route_handler(blocked: list[FetchError], is_async: bool):  # type: ignore[return]
+    if is_async:
+        async def _async_handler(route: Any) -> None:
+            req_url = route.request.url
+            if not req_url.startswith(("http://", "https://")):
+                await route.continue_()
+                return
+            try:
+                validate_url(req_url)
+                await route.continue_()
+            except URLValidationError as exc:
+                if not blocked:
+                    blocked.append(FetchError(f"Browser blocked URL: {exc}", "BROWSER_URL_BLOCKED"))
+                await route.abort("blockedbyclient")
+        return _async_handler
+    else:
+        def _sync_handler(route: Any) -> None:
+            req_url = route.request.url
+            if not req_url.startswith(("http://", "https://")):
+                route.continue_()
+                return
+            try:
+                validate_url(req_url)
+                route.continue_()
+            except URLValidationError as exc:
+                if not blocked:
+                    blocked.append(FetchError(f"Browser blocked URL: {exc}", "BROWSER_URL_BLOCKED"))
+                route.abort("blockedbyclient")
+        return _sync_handler
+
+
+# ---------------------------------------------------------------------------
+# Playwright Chromium fetch (with built-in + optional playwright-stealth patches)
+# ---------------------------------------------------------------------------
+
 def _browser_fetch_sync(
     url: str,
     cookies: list[dict] | None = None,
 ) -> FetchResult:
-    """Fetch with Playwright sync API for Windows selector event loops."""
+    """Playwright Chromium + stealth patches, sync API for Windows selector loops."""
     _ensure_windows_proactor_policy_for_playwright()
     try:
-        from playwright.sync_api import sync_playwright  # noqa: PLC0415
+        from playwright.sync_api import sync_playwright
     except ImportError as exc:
         raise FetchError(
-            "Browser rendering requires Playwright. "
-            "Install it: venv\\Scripts\\python.exe -m playwright install chromium",
+            "Playwright not installed. "
+            "Install: pip install playwright && python -m playwright install chromium",
             "BROWSER_UNAVAILABLE",
         ) from exc
 
@@ -244,44 +390,29 @@ def _browser_fetch_sync(
                     user_agent=settings.USER_AGENT,
                     java_script_enabled=True,
                     viewport={"width": 1920, "height": 1080},
-                    extra_http_headers={
-                        k: v for k, v in _STATIC_HEADERS.items()
-                        if k not in ("Accept-Encoding",)
-                    },
+                    extra_http_headers=_BROWSER_HEADERS,
                 )
                 if cookies:
                     context.add_cookies(cookies)
                 try:
-                    def _route_handler(route: Any) -> None:
-                        req_url = route.request.url
-                        if not req_url.startswith(("http://", "https://")):
-                            route.continue_()
-                            return
-                        try:
-                            validate_url(req_url)
-                            route.continue_()
-                        except URLValidationError as exc:
-                            if not blocked:
-                                blocked.append(
-                                    FetchError(
-                                        f"Browser blocked URL: {exc}",
-                                        "BROWSER_URL_BLOCKED",
-                                    )
-                                )
-                            route.abort("blockedbyclient")
-
-                    context.route("**", _route_handler)
-
+                    context.route("**", _make_route_handler(blocked, is_async=False))
                     page = context.new_page()
+                    # Built-in stealth init script (always applied)
+                    page.add_init_script(_STEALTH_INIT_SCRIPT)
+                    # Deeper stealth via playwright-stealth v2 if installed
+                    try:
+                        from playwright_stealth import Stealth
+                        Stealth().apply_stealth_sync(page)
+                    except ImportError:
+                        pass
+
                     response = page.goto(
                         url,
                         wait_until="domcontentloaded",
                         timeout=settings.SCRAPE_TIMEOUT * 1000,
                     )
-
                     if blocked:
                         raise blocked[0]
-
                     if response is None:
                         raise FetchError("Browser got no response", "FETCH_FAILED")
 
@@ -289,16 +420,18 @@ def _browser_fetch_sync(
                     try:
                         validate_url(final_url)
                     except URLValidationError as exc:
-                        raise FetchError(
-                            f"Final URL blocked: {exc}", "BROWSER_URL_BLOCKED"
-                        ) from exc
+                        raise FetchError(f"Final URL blocked: {exc}", "BROWSER_URL_BLOCKED") from exc
 
-                    # Wait for JS-rendered content to settle (covers CF JS-challenge
-                    # redirects and lazy-loaded content). Timeout is non-fatal.
                     try:
                         page.wait_for_load_state("networkidle", timeout=_BROWSER_SETTLE_MS)
                     except Exception:
                         pass
+
+                    # If an auto-solvable CF challenge is still showing, wait
+                    _chk = anti_bot_challenge_reason(page.content(), page.url)
+                    if _chk and _chk in AUTO_SOLVABLE_CHALLENGES:
+                        _wait_for_cf_challenge_sync(page)
+
                     html_raw = page.content().encode("utf-8")
                     final_url = page.url
                     elapsed = int((time.monotonic() - t0) * 1000)
@@ -324,19 +457,17 @@ async def _browser_fetch_async(
     url: str,
     cookies: list[dict] | None = None,
 ) -> FetchResult:
-    """Fetch a URL with Playwright Chromium. Raises FetchError if unavailable."""
+    """Playwright Chromium + stealth patches, async API."""
     try:
-        from playwright.async_api import async_playwright  # noqa: PLC0415
+        from playwright.async_api import async_playwright
     except ImportError as exc:
         raise FetchError(
-            "Browser rendering requires Playwright. "
-            "Install it: venv\\Scripts\\python.exe -m playwright install chromium",
+            "Playwright not installed. "
+            "Install: pip install playwright && python -m playwright install chromium",
             "BROWSER_UNAVAILABLE",
         ) from exc
 
     t0 = time.monotonic()
-    # Initialized before try so the except handler can check it even if
-    # page.goto() throws before the `if blocked:` guard inside the try runs.
     blocked: list[FetchError] = []
     try:
         async with async_playwright() as pw:
@@ -346,76 +477,49 @@ async def _browser_fetch_async(
                     user_agent=settings.USER_AGENT,
                     java_script_enabled=True,
                     viewport={"width": 1920, "height": 1080},
-                    extra_http_headers={
-                        k: v for k, v in _STATIC_HEADERS.items()
-                        if k not in ("Accept-Encoding",)
-                    },
+                    extra_http_headers=_BROWSER_HEADERS,
                 )
                 if cookies:
                     await context.add_cookies(cookies)
                 try:
-                    # SSRF prevention: intercept every outgoing request and block
-                    # private / metadata IPs before the connection is established.
-                    #
-                    # DNS rebinding limitation: validate_url resolves DNS here (in
-                    # Python), but the browser re-resolves at the TCP connect step.
-                    # An attacker-controlled domain can return a public IP during
-                    # this check and switch to a private IP for the actual connect.
-                    # That race is not preventable at the application layer. Full
-                    # mitigation requires an egress firewall or IP-pinned transport.
-
-                    async def _route_handler(route: Any) -> None:
-                        req_url = route.request.url
-                        # Only validate http/https; let data:/blob: through
-                        if not req_url.startswith(("http://", "https://")):
-                            await route.continue_()
-                            return
-                        try:
-                            validate_url(req_url)
-                            await route.continue_()
-                        except URLValidationError as exc:
-                            if not blocked:
-                                blocked.append(
-                                    FetchError(
-                                        f"Browser blocked URL: {exc}",
-                                        "BROWSER_URL_BLOCKED",
-                                    )
-                                )
-                            await route.abort("blockedbyclient")
-
-                    await context.route("**", _route_handler)
-
+                    await context.route("**", _make_route_handler(blocked, is_async=True))
                     page = await context.new_page()
+                    # Built-in stealth init script (always applied)
+                    await page.add_init_script(_STEALTH_INIT_SCRIPT)
+                    # Deeper stealth via playwright-stealth v2 if installed
+                    try:
+                        from playwright_stealth import Stealth
+                        await Stealth().apply_stealth_async(page)
+                    except ImportError:
+                        pass
+
                     response = await page.goto(
                         url,
                         wait_until="domcontentloaded",
                         timeout=settings.SCRAPE_TIMEOUT * 1000,
                     )
-
                     if blocked:
                         raise blocked[0]
-
                     if response is None:
                         raise FetchError("Browser got no response", "FETCH_FAILED")
 
                     status = response.status
                     final_url = page.url
-
-                    # Belt-and-suspenders: validate final URL in case JS navigation
-                    # landed on a redirected destination outside the route handler.
                     try:
                         validate_url(final_url)
                     except URLValidationError as exc:
-                        raise FetchError(
-                            f"Final URL blocked: {exc}", "BROWSER_URL_BLOCKED"
-                        ) from exc
+                        raise FetchError(f"Final URL blocked: {exc}", "BROWSER_URL_BLOCKED") from exc
 
-                    # Wait for JS-rendered content to settle (covers CF JS-challenge
-                    # redirects and lazy-loaded content). Timeout is non-fatal.
                     try:
                         await page.wait_for_load_state("networkidle", timeout=_BROWSER_SETTLE_MS)
                     except Exception:
                         pass
+
+                    # If an auto-solvable CF challenge is still showing, wait
+                    check = anti_bot_challenge_reason(await page.content(), page.url)
+                    if check and check in AUTO_SOLVABLE_CHALLENGES:
+                        await _wait_for_cf_challenge(page)
+
                     html_raw = (await page.content()).encode("utf-8")
                     final_url = page.url
                 finally:
@@ -425,8 +529,6 @@ async def _browser_fetch_async(
     except FetchError:
         raise
     except Exception as exc:
-        # Real Playwright throws from page.goto() when a route handler calls
-        # route.abort(). Check blocked first so the error code is correct.
         if blocked:
             raise blocked[0]
         raise FetchError(_format_browser_exception(exc), "FETCH_FAILED") from exc
@@ -449,48 +551,350 @@ async def _browser_fetch(
     return await _browser_fetch_async(url, cookies)
 
 
+# ---------------------------------------------------------------------------
+# Camoufox fetch — stealth Firefox, best detection evasion (Tier 1 best)
+# ---------------------------------------------------------------------------
+
+async def _camoufox_fetch_async(
+    url: str,
+    cookies: list[dict] | None = None,
+) -> FetchResult:
+    """Fetch with camoufox stealth Firefox. Best evasion for Cloudflare JS challenges."""
+    try:
+        from camoufox.async_api import AsyncCamoufox
+    except ImportError as exc:
+        raise FetchError(
+            "camoufox not installed. "
+            "Install: pip install \"camoufox[geoip]\" && python -m camoufox fetch",
+            "BROWSER_UNAVAILABLE",
+        ) from exc
+
+    t0 = time.monotonic()
+    blocked: list[FetchError] = []
+    try:
+        async with AsyncCamoufox(
+            headless=True,
+            geoip=True,
+            humanize=True,
+        ) as browser:
+            context = await browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                extra_http_headers=_BROWSER_HEADERS,
+            )
+            if cookies:
+                await context.add_cookies(cookies)
+            try:
+                await context.route("**", _make_route_handler(blocked, is_async=True))
+                page = await context.new_page()
+
+                response = await page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=settings.SCRAPE_TIMEOUT * 1000,
+                )
+                if blocked:
+                    raise blocked[0]
+                if response is None:
+                    raise FetchError("camoufox got no response", "FETCH_FAILED")
+
+                status = response.status
+                final_url = page.url
+                try:
+                    validate_url(final_url)
+                except URLValidationError as exc:
+                    raise FetchError(f"Final URL blocked: {exc}", "BROWSER_URL_BLOCKED") from exc
+
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=_BROWSER_SETTLE_MS)
+                except Exception:
+                    pass
+
+                # If CF challenge still showing, wait for it to auto-solve
+                check = anti_bot_challenge_reason(await page.content(), page.url)
+                if check:
+                    await _wait_for_cf_challenge(page)
+
+                html_raw = (await page.content()).encode("utf-8")
+                final_url = page.url
+            finally:
+                await context.close()
+    except FetchError:
+        raise
+    except Exception as exc:
+        if blocked:
+            raise blocked[0]
+        raise FetchError(_format_browser_exception(exc), "FETCH_FAILED") from exc
+
+    elapsed = int((time.monotonic() - t0) * 1000)
+    return _browser_result_from_html(
+        html_raw=html_raw,
+        final_url=final_url,
+        status=status,
+        elapsed_ms=elapsed,
+        render_mode=RenderModeUsed.CAMOUFOX,
+    )
+
+
+def _camoufox_fetch_in_thread(
+    url: str,
+    cookies: list[dict] | None = None,
+) -> FetchResult:
+    """Run camoufox in a worker thread with its own ProactorEventLoop (Windows compat)."""
+    _ensure_windows_proactor_policy_for_playwright()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(_camoufox_fetch_async(url, cookies))
+    finally:
+        loop.close()
+
+
+async def _camoufox_fetch(
+    url: str,
+    cookies: list[dict] | None = None,
+) -> FetchResult:
+    if _should_use_threaded_browser_fetch():
+        return await asyncio.to_thread(_camoufox_fetch_in_thread, url, cookies)
+    return await _camoufox_fetch_async(url, cookies)
+
+
+# ---------------------------------------------------------------------------
+# FlareSolverr fetch — Docker-based CF challenge solver (Tier 2, nuclear option)
+# ---------------------------------------------------------------------------
+
+async def _flaresolverr_fetch(url: str) -> FetchResult:
+    """Submit URL to a FlareSolverr instance and return the solved HTML.
+
+    FlareSolverr runs a stealth browser in a Docker container and returns the
+    page content after solving any Cloudflare JS challenge. Configure via
+    FLARESOLVERR_URL in .env (e.g. http://localhost:8191).
+    """
+    base = settings.FLARESOLVERR_URL.rstrip("/")
+    timeout_ms = settings.FLARESOLVERR_TIMEOUT * 1000
+    t0 = time.monotonic()
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=settings.FLARESOLVERR_TIMEOUT + 15,
+        ) as client:
+            resp = await client.post(
+                f"{base}/v1",
+                json={"cmd": "request.get", "url": url, "maxTimeout": timeout_ms},
+            )
+    except httpx.RequestError as exc:
+        raise FetchError(
+            f"FlareSolverr unreachable at {base}: {exc}", "FETCH_FAILED"
+        ) from exc
+
+    try:
+        data = resp.json()
+    except Exception as exc:
+        raise FetchError(f"FlareSolverr returned non-JSON response", "FETCH_FAILED") from exc
+
+    if data.get("status") != "ok":
+        msg = data.get("message") or data.get("error") or "unknown error"
+        raise FetchError(f"FlareSolverr failed: {msg}", "FETCH_FAILED")
+
+    solution = data.get("solution", {})
+    html = solution.get("response", "")
+    if not html:
+        raise FetchError("FlareSolverr returned empty response body", "FETCH_FAILED")
+
+    html_bytes = html.encode("utf-8")
+    if len(html_bytes) > settings.MAX_FETCH_BYTES:
+        html_bytes = html_bytes[: settings.MAX_FETCH_BYTES]
+    html = html_bytes.decode("utf-8", errors="replace")
+
+    final_url = solution.get("url") or url
+    status = solution.get("status") or 200
+    elapsed = int((time.monotonic() - t0) * 1000)
+
+    logger.info(
+        "fetcher.flaresolverr_success",
+        extra={"url": url, "status": status, "elapsed_ms": elapsed},
+    )
+
+    return FetchResult(
+        html=html,
+        content_hash=hashlib.sha256(html.encode("utf-8")).hexdigest(),
+        final_url=final_url,
+        render_mode_used=RenderModeUsed.FLARESOLVERR,
+        status_code=status,
+        elapsed_ms=elapsed,
+        fetch_metadata={"via": "flaresolverr", "elapsed_ms": elapsed},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stealth cascade: camoufox → stealth Playwright → FlareSolverr
+# ---------------------------------------------------------------------------
+
+async def _stealth_browser_fetch(
+    url: str,
+    cookies: list[dict] | None = None,
+) -> FetchResult:
+    """Try stealth backends in order of effectiveness.
+
+    1. camoufox (stealth Firefox — best, requires separate install)
+    2. Playwright Chromium + stealth patches (always available if playwright installed)
+
+    If both raise BROWSER_UNAVAILABLE it means neither is installed.
+    """
+    # Try camoufox first — best fingerprint evasion
+    try:
+        result = await _camoufox_fetch(url, cookies)
+        logger.info("fetcher.camoufox_success", extra={"url": url})
+        return result
+    except FetchError as exc:
+        if exc.error_code != "BROWSER_UNAVAILABLE":
+            raise
+        logger.info("fetcher.camoufox_unavailable_fallback_playwright", extra={"url": url})
+
+    # Fall back to stealth Playwright Chromium
+    return await _browser_fetch(url, cookies)
+
+
+async def _best_fetch_with_fallback(
+    url: str,
+    cookies: list[dict] | None = None,
+    *,
+    log_event: str,
+    challenge: str | None,
+) -> FetchResult:
+    """Run the stealth browser cascade, then try FlareSolverr if still blocked."""
+    logger.info(log_event, extra={"url": url, "challenge": challenge})
+
+    try:
+        result = await _stealth_browser_fetch(url, cookies)
+    except FetchError as exc:
+        if exc.error_code == "BROWSER_UNAVAILABLE":
+            logger.info("fetcher.all_browsers_unavailable", extra={"url": url})
+            # If FlareSolverr is configured, try it even without a local browser
+            if settings.FLARESOLVERR_URL:
+                return await _flaresolverr_fetch(url)
+            raise
+        raise
+
+    # Check if the stealth browser still got blocked
+    remaining_challenge = anti_bot_challenge_reason(result.html, result.final_url)
+    if remaining_challenge and settings.FLARESOLVERR_URL:
+        logger.info(
+            "fetcher.stealth_still_blocked_trying_flaresolverr",
+            extra={"url": url, "challenge": remaining_challenge},
+        )
+        try:
+            fs_result = await _flaresolverr_fetch(url)
+            # Only use FlareSolverr result if it actually broke through
+            fs_challenge = anti_bot_challenge_reason(fs_result.html, fs_result.final_url)
+            if not fs_challenge:
+                return fs_result
+            logger.info(
+                "fetcher.flaresolverr_also_blocked",
+                extra={"url": url, "challenge": fs_challenge},
+            )
+        except FetchError as exc:
+            logger.warning(
+                "fetcher.flaresolverr_error",
+                extra={"url": url, "error": str(exc)},
+            )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Heuristics
+# ---------------------------------------------------------------------------
+
+# Status codes that commonly mean "bot detected, try stealth browser".
+_BLOCKED_STATUS_CODES = frozenset({401, 403, 407, 429, 503})
+
+
 def _is_sparse(html: str) -> bool:
-    """Heuristic: page is too sparse to extract from without JS rendering."""
     stripped = html.replace(" ", "").replace("\n", "")
     return len(stripped) < 500
 
+
+async def _wait_for_cf_challenge(page: Any, *, timeout_s: float = 25.0) -> None:
+    """Poll until the page is no longer a CF challenge page, or timeout.
+
+    CF JS challenges auto-solve and redirect in ~3-8 s when the browser
+    passes fingerprint checks.  We poll every 2 s rather than using
+    wait_for_navigation because CF redirects back to the same URL.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        await asyncio.sleep(2)
+        try:
+            html = await page.content()
+        except Exception:
+            return
+        if not anti_bot_challenge_reason(html, page.url):
+            return
+
+
+def _wait_for_cf_challenge_sync(page: Any, *, timeout_s: float = 25.0) -> None:
+    """Sync version of _wait_for_cf_challenge."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        time.sleep(2)
+        try:
+            html = page.content()
+        except Exception:
+            return
+        if not anti_bot_challenge_reason(html, page.url):
+            return
+
+
+# ---------------------------------------------------------------------------
+# Public entrypoint
+# ---------------------------------------------------------------------------
 
 async def fetch_url(
     url: str,
     render_mode: str = "AUTO",
     browser_session_cookies: list[dict] | None = None,
 ) -> FetchResult:
-    """
-    Fetch a URL according to render_mode.
+    """Fetch a URL with the appropriate strategy.
 
-    AUTO: try static first; if content is sparse or a Playwright-solvable
-    bot challenge is detected, retry with browser (no crash if unavailable).
-    STATIC: static only.
-    BROWSER: browser only; raises FetchError with BROWSER_UNAVAILABLE if
-    not installed.
+    AUTO  — static first; if sparse or CF-JS-challenge detected, run the full
+            stealth cascade (camoufox → stealth Playwright → FlareSolverr).
+    BROWSER — stealth cascade directly (skip static).
+    STATIC  — static httpx only.
     """
     if render_mode == "BROWSER":
-        return await _browser_fetch(url, browser_session_cookies)
+        return await _best_fetch_with_fallback(
+            url,
+            browser_session_cookies,
+            log_event="fetcher.browser_mode_stealth_fetch",
+            challenge=None,
+        )
 
     result = await _static_fetch(url)
 
     if render_mode != "AUTO":
         return result
 
-    # Determine whether a browser retry is warranted.
     challenge: str | None = None
     if _is_sparse(result.html):
-        log_event = "fetcher.sparse_content_browser_fallback"
+        log_event = "fetcher.sparse_content_stealth_fallback"
+    elif result.status_code in _BLOCKED_STATUS_CODES:
+        # 403/429/503 from a static fetch almost always means bot detection.
+        # Try the stealth cascade regardless of what the body looks like.
+        log_event = "fetcher.blocked_status_stealth_fallback"
     else:
         challenge = anti_bot_challenge_reason(result.html, result.final_url)
-        if challenge in _BROWSER_RETRYABLE_CHALLENGES:
-            log_event = "fetcher.challenge_browser_retry"
+        if challenge in AUTO_SOLVABLE_CHALLENGES:
+            log_event = "fetcher.challenge_stealth_retry"
         else:
             return result
 
-    logger.info(log_event, extra={"url": url, "challenge": challenge})
     try:
-        result = await _browser_fetch(url, browser_session_cookies)
+        result = await _best_fetch_with_fallback(
+            url,
+            browser_session_cookies,
+            log_event=log_event,
+            challenge=challenge,
+        )
     except FetchError as exc:
         if exc.error_code == "BROWSER_UNAVAILABLE":
             logger.info(

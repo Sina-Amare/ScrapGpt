@@ -139,6 +139,32 @@ class Settings(BaseSettings):
     )
 
     # -------------------------------------------------------------------------
+    # Anti-Bot / Stealth Settings
+    # -------------------------------------------------------------------------
+    FLARESOLVERR_URL: str = Field(
+        default="",
+        description=(
+            "Optional FlareSolverr instance URL (e.g. http://localhost:8191). "
+            "When set, ScrapGPT uses FlareSolverr as a last-resort fallback for "
+            "Cloudflare JS challenges that survive camoufox/stealth-Playwright. "
+            "Run with: docker run -d -p 8191:8191 flaresolverr/flaresolverr:latest"
+        ),
+    )
+    FLARESOLVERR_TIMEOUT: int = Field(
+        default=60,
+        ge=10,
+        le=300,
+        description="Seconds to wait for FlareSolverr to solve a challenge.",
+    )
+    CAPSOLVER_API_KEY: str = Field(
+        default="",
+        description=(
+            "Optional CapSolver API key for solving Cloudflare Turnstile and "
+            "reCAPTCHA challenges automatically. Get one at capsolver.com."
+        ),
+    )
+
+    # -------------------------------------------------------------------------
     # Watchdog Settings
     # -------------------------------------------------------------------------
     WATCHDOG_SCRAPING_TIMEOUT_MINUTES: int = Field(default=5, ge=1, le=30)

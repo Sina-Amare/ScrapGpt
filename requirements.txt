@@ -97,6 +97,16 @@ httpx~=0.28.0
 #   python -m playwright install chromium
 # playwright>=1.40.0
 
+# playwright-stealth: Patches Playwright Chromium to evade bot detection (OPTIONAL)
+# Removes navigator.webdriver, injects real Chrome fingerprints, etc.
+# Install: pip install playwright-stealth
+# playwright-stealth>=1.0.0
+
+# camoufox: Stealth Firefox for bypassing Cloudflare JS challenges (OPTIONAL, RECOMMENDED)
+# Firefox-based — much harder to fingerprint than headless Chromium.
+# Install: pip install "camoufox[geoip]" && python -m camoufox fetch
+# camoufox[geoip]>=0.4.0
+
 # -----------------------------------------------------------------------------
 # Background Jobs
 # -----------------------------------------------------------------------------
