@@ -278,6 +278,12 @@ class Project(Base):
         back_populates="project",
         cascade="all, delete-orphan",
     )
+    frontier_previews = relationship(
+        "FrontierPreview",
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="FrontierPreview.created_at.desc()",
+    )
 
     @property
     def is_terminal(self) -> bool:
@@ -478,7 +484,7 @@ class FrontierPreview(Base):
         nullable=False,
     )
 
-    project = relationship("Project", backref="frontier_previews")
+    project = relationship("Project", back_populates="frontier_previews")
     spec = relationship("ExtractionSpec")
 
 

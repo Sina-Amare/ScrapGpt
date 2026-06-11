@@ -673,6 +673,70 @@ async def test_execute_project_extraction_all_pages_failed_real_path(
 
 
 @pytest.mark.asyncio
+async def test_execute_project_extraction_blocks_cloudflare_challenge(
+    monkeypatch,
+):
+    """Anti-bot challenge HTML must not count as a successful extracted page."""
+    from app.services import project_extraction
+    from app.services.robots_service import RobotsResult
+
+    project = _extraction_project()
+    spec = _extraction_spec()
+    page = CrawlPage(
+        id=101,
+        project_id=project.id,
+        url=project.url,
+        normalized_url=project.normalized_url,
+        state=CrawlPageState.PENDING,
+        depth=0,
+        retry_count=0,
+    )
+    db = FakeExtractionDB(project, spec, pages_extracted=0)
+    pending_pages = [page]
+
+    monkeypatch.setattr(project_extraction, "async_session_factory", lambda: db)
+    monkeypatch.setattr(
+        project_extraction,
+        "settings",
+        SimpleNamespace(MAX_PAGES_PER_JOB=500, MIN_CRAWL_DELAY_MS=0),
+    )
+    monkeypatch.setattr(project_extraction, "validate_url", lambda url: url)
+
+    async def not_canceled(db, project_id):
+        return False
+
+    async def next_pending_page(db, project_id):
+        return pending_pages.pop(0) if pending_pages else None
+
+    async def robots_allowed(url):
+        return SimpleNamespace(result=RobotsResult.ALLOWED, reason=None)
+
+    async def fake_fetch_url(url, render_mode):
+        return SimpleNamespace(
+            html=(
+                "<html><title>Just a moment...</title>"
+                "<script src='/cdn-cgi/challenge-platform/h/b/orchestrate/jsch/v1'></script>"
+                "<body>Checking if the site connection is secure</body></html>"
+            ),
+            final_url=url,
+        )
+
+    monkeypatch.setattr(project_extraction, "_project_was_canceled", not_canceled)
+    monkeypatch.setattr(project_extraction, "_pending_page", next_pending_page)
+    monkeypatch.setattr(project_extraction, "check_robots", robots_allowed)
+    monkeypatch.setattr(project_extraction, "fetch_url", fake_fetch_url)
+
+    await project_extraction.execute_project_extraction(project.id, spec.id)
+
+    assert project.state == ProjectState.FAILED
+    assert project.error_code == "ALL_PAGES_FAILED"
+    assert page.state == CrawlPageState.BLOCKED
+    assert page.block_reason == "ANTI_BOT_CHALLENGE"
+    assert page.lease_expires_at is None
+    assert db.added == []
+
+
+@pytest.mark.asyncio
 async def test_execute_project_extraction_does_not_complete_failed_project(
     monkeypatch,
 ):
@@ -683,7 +747,7 @@ async def test_execute_project_extraction_does_not_complete_failed_project(
     project = _extraction_project()
     spec = _extraction_spec()
     page = CrawlPage(
-        id=101,
+        id=102,
         project_id=project.id,
         url=project.url,
         normalized_url=project.normalized_url,

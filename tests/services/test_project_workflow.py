@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
 
 import pytest
+from sqlalchemy import inspect
 
-from app.models.job import ExtractionMode, ExtractionSpec, Project, ProjectState, RenderMode, WorkflowMode
+from app.models.job import ExtractionMode, ExtractionSpec, FrontierPreview, Project, ProjectState, RenderMode, WorkflowMode
 from app.services.extractor import extract_records_from_html
 from app.services.extraction_spec_service import default_spec_from_analysis, selected_field_count
 from app.services.project_preview import build_preview_payload
@@ -23,6 +24,19 @@ def _project(analysis: dict, mode: ExtractionMode = ExtractionMode.STRUCTURED) -
         analysis=analysis,
         created_at=datetime.now(timezone.utc),
     )
+
+
+def test_project_owns_frontier_previews_for_delete_cascade():
+    relation = inspect(Project).relationships["frontier_previews"]
+    fk_ondelete = {
+        fk.ondelete
+        for fk in FrontierPreview.__table__.c.project_id.foreign_keys
+    }
+
+    assert relation.back_populates == "project"
+    assert "delete" in relation.cascade
+    assert "delete-orphan" in relation.cascade
+    assert fk_ondelete == {"CASCADE"}
 
 
 @pytest.mark.parametrize("confidence,selected", [(0.9, True), (0.69, False)])

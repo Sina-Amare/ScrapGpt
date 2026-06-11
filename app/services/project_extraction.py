@@ -25,6 +25,7 @@ from app.models.job import (
     Project,
     ProjectState,
 )
+from app.services.anti_bot import anti_bot_challenge_reason
 from app.services.crawl_scope import (
     CrawlScopeMode,
     ScopeConfirmationError,
@@ -315,6 +316,25 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                         continue
 
                     fetched = await fetch_url(validated_url, project.render_mode.value)
+                    challenge_reason = anti_bot_challenge_reason(fetched.html, fetched.final_url)
+                    if challenge_reason:
+                        page.state = CrawlPageState.BLOCKED
+                        page.block_reason = "ANTI_BOT_CHALLENGE"
+                        page.error = f"Anti-bot challenge detected: {challenge_reason}"
+                        page.lease_expires_at = None
+                        await db.commit()
+                        logger.warning(
+                            "extraction.page_anti_bot_blocked",
+                            extra={
+                                "project_id": project_id,
+                                "page_id": page.id,
+                                "url": fetched.final_url,
+                                "reason": challenge_reason,
+                            },
+                        )
+                        processed_pages += 1
+                        continue
+
                     page.url = fetched.final_url
                     page.normalized_url = normalize_url(fetched.final_url)
 

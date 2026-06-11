@@ -7,7 +7,19 @@ from fastapi import FastAPI
 
 from app.api import deps
 from app.api.v1.endpoints import projects
-from app.models.job import ExtractionMode, Project, ProjectState, RenderMode, WorkflowMode
+from app.models.job import (
+    CrawlPage,
+    Export,
+    ExtractedRecord,
+    ExtractionMode,
+    ExtractionSpec,
+    FrontierPreview,
+    PreviewResult,
+    Project,
+    ProjectState,
+    RenderMode,
+    WorkflowMode,
+)
 from app.models.provider_config import ProviderConfig
 from app.models.user import User
 from app.services.job_admission import JobAdmissionSuccess
@@ -33,6 +45,8 @@ def _project(user_id: int = 1) -> Project:
 
 
 class _NoRows:
+    rowcount = 0
+
     def scalar_one_or_none(self):
         return None
 
@@ -49,6 +63,7 @@ class FakeProjectSession:
     def __init__(self, project: Project | None = None):
         self.project = project
         self.commits = 0
+        self.deleted_tables = []
 
     async def get(self, model, pk):
         if model is Project and self.project and self.project.id == pk:
@@ -56,6 +71,9 @@ class FakeProjectSession:
         return None
 
     async def execute(self, statement):
+        table = getattr(statement, "table", None)
+        if table is not None:
+            self.deleted_tables.append(table.name)
         return _NoRows()
 
     async def scalar(self, statement):
@@ -130,3 +148,41 @@ async def test_get_project_404_for_other_user(async_client, app):
     response = await async_client.get("/api/v1/projects/1")
 
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_terminal_project_removes_project_tree(async_client, app):
+    project = _project()
+    project.state = ProjectState.COMPLETED
+    db = FakeProjectSession(project)
+    app.dependency_overrides[deps.get_current_user] = lambda: _user(user_id=1)
+    app.dependency_overrides[deps.get_db] = lambda: (yield db)
+
+    response = await async_client.delete("/api/v1/projects/1")
+
+    assert response.status_code == 204
+    assert db.commits == 1
+    assert db.deleted_tables == [
+        ExtractedRecord.__tablename__,
+        Export.__tablename__,
+        FrontierPreview.__tablename__,
+        PreviewResult.__tablename__,
+        CrawlPage.__tablename__,
+        ExtractionSpec.__tablename__,
+        Project.__tablename__,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_active_project_returns_400_without_deleting(async_client, app):
+    project = _project()
+    project.state = ProjectState.EXTRACTING
+    db = FakeProjectSession(project)
+    app.dependency_overrides[deps.get_current_user] = lambda: _user(user_id=1)
+    app.dependency_overrides[deps.get_db] = lambda: (yield db)
+
+    response = await async_client.delete("/api/v1/projects/1")
+
+    assert response.status_code == 400
+    assert db.commits == 0
+    assert db.deleted_tables == []

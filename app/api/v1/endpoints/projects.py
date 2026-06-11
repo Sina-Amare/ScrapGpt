@@ -55,6 +55,7 @@ from app.services.frontierpreview import create_frontier_preview, latest_frontie
 from app.services.job_admission import JobAdmissionError, JobAdmissionErrorType, admit_job
 from app.services.job_executor import execute_job_pipeline
 from app.services.job_state import transition_job_to_canceled
+from app.services.project_lifecycle import delete_project_tree
 from app.services.project_extraction import count_records, execute_project_extraction, list_records, start_project_extraction
 from app.services.project_preview import create_preview, latest_preview
 from app.services.project_status import confidence_label, detected_type, product_status_for
@@ -683,6 +684,5 @@ async def delete_project(
     project = await _owned_project(db, user, project_id)
     if project.state not in DELETABLE_PROJECT_STATES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete an active project")
-    await db.delete(project)
-    await db.commit()
+    await delete_project_tree(db, project)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
