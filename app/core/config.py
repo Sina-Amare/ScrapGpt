@@ -158,9 +158,13 @@ class Settings(BaseSettings):
         description="Allow fetching private/localhost URLs (tests and dev only)"
     )
     ROBOTS_FAILURE_POLICY: str = Field(
-        default="deny",
+        default="allow",
         pattern="^(deny|allow)$",
-        description="What to do when robots.txt cannot be fetched: deny or allow"
+        description=(
+            "What to do when robots.txt cannot be fetched. "
+            "allow = proceed with scraping (most sites lack robots.txt); "
+            "deny = fail the task/project if robots.txt is unreachable"
+        )
     )
     MAX_FETCH_BYTES: int = Field(
         default=2 * 1024 * 1024,
