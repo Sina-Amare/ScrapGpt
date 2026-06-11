@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.db.database import async_session_factory
 from app.models.job import AnalysisCache, ExtractionMode
 from app.models.provider_config import ProviderConfig
@@ -97,15 +98,22 @@ async def _lookup_cache(
     provider: str,
     model: str,
 ) -> dict[str, Any] | None:
-    result = await db.execute(
-        select(AnalysisCache).where(
-            AnalysisCache.content_hash == content_hash,
-            AnalysisCache.extraction_mode == extraction_mode,
-            AnalysisCache.provider == provider,
-            AnalysisCache.model == model,
-            AnalysisCache.analyzer_version == ANALYZER_VERSION,
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    conditions = [
+        AnalysisCache.content_hash == content_hash,
+        AnalysisCache.extraction_mode == extraction_mode,
+        AnalysisCache.provider == provider,
+        AnalysisCache.model == model,
+        AnalysisCache.analyzer_version == ANALYZER_VERSION,
+    ]
+    # Filter out expired entries when TTL is configured.
+    if settings.ANALYSIS_CACHE_TTL_DAYS > 0:
+        conditions.append(
+            (AnalysisCache.expires_at.is_(None)) | (AnalysisCache.expires_at > now)
         )
-    )
+    result = await db.execute(select(AnalysisCache).where(*conditions))
     row = result.scalar_one_or_none()
     return row.result if row is not None else None
 
@@ -119,6 +127,13 @@ async def _store_cache(
     result: dict[str, Any],
     normalized_url: str | None,
 ) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    expires_at = None
+    if settings.ANALYSIS_CACHE_TTL_DAYS > 0:
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            days=settings.ANALYSIS_CACHE_TTL_DAYS
+        )
     entry = AnalysisCache(
         content_hash=content_hash,
         extraction_mode=extraction_mode,
@@ -127,6 +142,7 @@ async def _store_cache(
         analyzer_version=ANALYZER_VERSION,
         result=result,
         normalized_url=normalized_url,
+        expires_at=expires_at,
     )
     db.add(entry)
     try:

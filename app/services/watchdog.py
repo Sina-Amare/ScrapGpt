@@ -33,6 +33,7 @@ from sqlalchemy import select, func, update
 from app.core.config import settings
 from app.db.database import async_session_factory
 from app.models.job import (
+    AnalysisCache,
     CrawlPage,
     CrawlPageState,
     Job,
@@ -474,6 +475,41 @@ async def cleanup_stuck_projects() -> int:
     return cleaned
 
 
+async def cleanup_expired_analysis_cache() -> int:
+    """Purge analysis cache entries whose expires_at has passed.
+
+    Only runs when ANALYSIS_CACHE_TTL_DAYS > 0. Returns the number
+    of entries deleted.
+    """
+    if settings.ANALYSIS_CACHE_TTL_DAYS <= 0:
+        return 0
+
+    now = datetime.now(timezone.utc)
+    cleaned = 0
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(AnalysisCache).where(
+                AnalysisCache.expires_at.isnot(None),
+                AnalysisCache.expires_at < now,
+            )
+        )
+        expired = result.scalars().all()
+
+        for entry in expired:
+            await db.delete(entry)
+            cleaned += 1
+
+        if cleaned > 0:
+            await db.commit()
+            logger.info(
+                "watchdog.cache_purged",
+                extra={"count": cleaned},
+            )
+
+    return cleaned
+
+
 async def run_watchdog_once() -> None:
     """Run watchdog cleanup once. Called by background scheduler."""
     try:
@@ -488,6 +524,7 @@ async def run_watchdog_once() -> None:
         job_cleaned = await cleanup_stuck_jobs()
         lease_recovered = await cleanup_expired_crawl_page_leases()
         project_cleaned = await cleanup_stuck_projects()
+        cache_purged = await cleanup_expired_analysis_cache()
         duration_ms = round(
             (time.monotonic() - sweep_start) * 1000, 1
         )
@@ -498,6 +535,7 @@ async def run_watchdog_once() -> None:
                 "jobs_reset": job_cleaned,
                 "leases_recovered": lease_recovered,
                 "projects_reset": project_cleaned,
+                "cache_purged": cache_purged,
                 "duration_ms": duration_ms,
             },
         )

@@ -107,6 +107,17 @@ class Settings(BaseSettings):
     READINESS_TIMEOUT_SECONDS: float = Field(default=2.0, ge=0.5, le=10.0)
     MAX_CONCURRENT_JOBS_PER_USER: int = Field(default=3, ge=1, le=50)
     MAX_PAGES_PER_JOB: int = Field(default=500, ge=1, le=100000)
+    MAX_RECORDS_PER_PAGE: int = Field(
+        default=1000,
+        ge=1,
+        le=10000,
+        description=(
+            "Maximum records extracted from a single page. "
+            "Prevents runaway extraction on pages with very "
+            "large repeated containers. Operator-level setting; "
+            "not surfaced to users."
+        ),
+    )
     CRAWL_CONCURRENCY: int = Field(
         default=3, ge=1, le=50,
         description=(
@@ -142,8 +153,13 @@ class Settings(BaseSettings):
         description="Timeout for projects stuck in DISCOVERING"
     )
     WATCHDOG_PROJECT_EXTRACTING_TIMEOUT_MINUTES: int = Field(
-        default=60, ge=5, le=180,
-        description="Timeout for projects stuck in EXTRACTING"
+        default=10, ge=5, le=180,
+        description=(
+            "Timeout for projects stuck in EXTRACTING. "
+            "Reduced from 60 to 10 minutes because in-process "
+            "BackgroundTasks cannot survive a server restart — "
+            "a shorter timeout surfaces crashed extractions faster."
+        ),
     )
     WATCHDOG_PROJECT_EXPORTING_TIMEOUT_MINUTES: int = Field(
         default=10, ge=1, le=30,
@@ -177,6 +193,16 @@ class Settings(BaseSettings):
         ge=0.0,
         le=1.0,
         description="Minimum confidence for FAST workflow to land in ANALYSIS_READY vs AWAITING_SETUP"
+    )
+    ANALYSIS_CACHE_TTL_DAYS: int = Field(
+        default=30,
+        ge=0,
+        le=365,
+        description=(
+            "Days before cached LLM analysis results expire. "
+            "0 = no TTL (cache never expires, same as prior behavior). "
+            "Stale cache entries are purged by the watchdog."
+        ),
     )
 
     # -------------------------------------------------------------------------

@@ -388,7 +388,7 @@ async def test_stuck_project_watchdog_fails_discovering_project(
             (),
             {
                 "WATCHDOG_PROJECT_DISCOVERING_TIMEOUT_MINUTES": cutoff_minutes,
-                "WATCHDOG_PROJECT_EXTRACTING_TIMEOUT_MINUTES": 60,
+                "WATCHDOG_PROJECT_EXTRACTING_TIMEOUT_MINUTES": 10,
                 "WATCHDOG_PROJECT_EXPORTING_TIMEOUT_MINUTES": 10,
             },
         )(),
@@ -440,7 +440,7 @@ async def test_stuck_project_watchdog_fails_extracting_project(
             (),
             {
                 "WATCHDOG_PROJECT_DISCOVERING_TIMEOUT_MINUTES": 10,
-                "WATCHDOG_PROJECT_EXTRACTING_TIMEOUT_MINUTES": 60,
+                "WATCHDOG_PROJECT_EXTRACTING_TIMEOUT_MINUTES": 10,
                 "WATCHDOG_PROJECT_EXPORTING_TIMEOUT_MINUTES": 10,
             },
         )(),
@@ -630,7 +630,7 @@ async def test_execute_project_extraction_all_pages_failed_real_path(
     monkeypatch.setattr(
         project_extraction,
         "settings",
-        SimpleNamespace(MAX_PAGES_PER_JOB=500, MIN_CRAWL_DELAY_MS=0),
+        SimpleNamespace(MAX_PAGES_PER_JOB=500, MAX_RECORDS_PER_PAGE=1000, MIN_CRAWL_DELAY_MS=0),
     )
     monkeypatch.setattr(project_extraction, "validate_url", lambda url: url)
 
@@ -698,7 +698,7 @@ async def test_execute_project_extraction_blocks_cloudflare_challenge(
     monkeypatch.setattr(
         project_extraction,
         "settings",
-        SimpleNamespace(MAX_PAGES_PER_JOB=500, MIN_CRAWL_DELAY_MS=0),
+        SimpleNamespace(MAX_PAGES_PER_JOB=500, MAX_RECORDS_PER_PAGE=1000, MIN_CRAWL_DELAY_MS=0),
     )
     monkeypatch.setattr(project_extraction, "validate_url", lambda url: url)
 
@@ -772,7 +772,7 @@ async def test_execute_project_extraction_fails_structured_zero_records(
     monkeypatch.setattr(
         project_extraction,
         "settings",
-        SimpleNamespace(MAX_PAGES_PER_JOB=500, MIN_CRAWL_DELAY_MS=0),
+        SimpleNamespace(MAX_PAGES_PER_JOB=500, MAX_RECORDS_PER_PAGE=1000, MIN_CRAWL_DELAY_MS=0),
     )
     monkeypatch.setattr(project_extraction, "validate_url", lambda url: url)
 
@@ -844,7 +844,7 @@ async def test_execute_project_extraction_does_not_complete_failed_project(
     monkeypatch.setattr(
         project_extraction,
         "settings",
-        SimpleNamespace(MAX_PAGES_PER_JOB=500, MIN_CRAWL_DELAY_MS=0),
+        SimpleNamespace(MAX_PAGES_PER_JOB=500, MAX_RECORDS_PER_PAGE=1000, MIN_CRAWL_DELAY_MS=0),
     )
     monkeypatch.setattr(project_extraction, "validate_url", lambda url: url)
 
@@ -945,7 +945,7 @@ def test_watchdog_project_timeout_defaults():
     )
 
     assert settings.WATCHDOG_PROJECT_DISCOVERING_TIMEOUT_MINUTES == 10
-    assert settings.WATCHDOG_PROJECT_EXTRACTING_TIMEOUT_MINUTES == 60
+    assert settings.WATCHDOG_PROJECT_EXTRACTING_TIMEOUT_MINUTES == 10
     assert settings.WATCHDOG_PROJECT_EXPORTING_TIMEOUT_MINUTES == 10
 
 

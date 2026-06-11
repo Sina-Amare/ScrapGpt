@@ -1,6 +1,6 @@
 # ScrapGPT Status
 
-Last verified: June 10, 2026 (reliability hardening complete).
+Last verified: June 11, 2026 (Phase 2.5+ hardening: export cap, cache TTL, state machine fix, timeout reduction).
 
 ## Implemented
 
@@ -62,13 +62,20 @@ Last verified: June 10, 2026 (reliability hardening complete).
 - **Reliability hardening (Phase 2.5 closeout):**
   - Legacy `/scrape` pipeline now has SSRF-safe URL validation at the endpoint (immediate 400 feedback), executor (defense-in-depth), and redirect-hop levels, plus `robots.txt` checks mirroring the project pipeline.
   - CrawlPage lease reaper: `cleanup_expired_crawl_page_leases()` resets FETCHING pages with expired leases back to PENDING, only within active projects. Runs every 60 seconds via the watchdog scheduler.
-  - Stuck-project watchdog: `cleanup_stuck_projects()` fails projects stuck in DISCOVERING/EXTRACTING/EXPORTING beyond configurable timeouts (10/60/10 minutes). Uses atomic UPDATE with WHERE-clause state guards for concurrency safety.
+  - Stuck-project watchdog: `cleanup_stuck_projects()` fails projects stuck in DISCOVERING/EXTRACTING/EXPORTING beyond configurable timeouts. Uses atomic UPDATE with WHERE-clause state guards for concurrency safety.
   - Extraction completion semantics: projects where all pages fail or are blocked now transition to FAILED with `error_code = "ALL_PAGES_FAILED"` instead of COMPLETED with zero records. Partial success (some pages extracted) still completes normally with quality assessment.
-  - Anti-bot challenge pages (Cloudflare/captcha markers such as OATD's `Just a moment...` / `Enable JavaScript and cookies to continue` response) are classified as blocked extraction input, not extracted content.
+  - Anti-bot challenge pages (Cloudflare/captcha markers) are classified as blocked extraction input, not extracted content.
   - Structured extraction with fetched pages but zero extracted rows now fails with `error_code = "NO_RECORDS_EXTRACTED"` instead of producing a misleading "Results ready" empty export.
   - CORS default now includes `http://127.0.0.1:5173` (Vite dev server origin).
   - `CRAWL_CONCURRENCY` setting description clarified as "Reserved for future use" since the executor is sequential.
   - See `docs/learning/12_reliability_hardening.md` for decision log.
+
+- **Phase 2.5+ hardening (June 11, 2026):**
+  - **Export cap removed:** The export endpoint previously had a silent 5000-record hard cap (`list_records(db, project_id, 0, 5000)`). Now loads all records in 1000-record chunks with no truncation. Large exports (>10,000 records) log a warning for operator visibility. The `export.completed` log event now includes both `record_count` (exported) and `total_records` (DB count) to make any discrepancy observable.
+  - **Per-page extraction limit made configurable:** `MAX_RECORDS_PER_PAGE` env var (default 1000, range 1–10000) controls the maximum records extracted from a single page. Previously hardcoded at 1000 with no documentation. Now passed explicitly from `settings.MAX_RECORDS_PER_PAGE` in the extraction loop. Operator-only setting, not surfaced to users.
+  - **State machine bypass fixed:** `PAUSED → FAILED` transition added to `VALID_PROJECT_TRANSITIONS`. `_mark_project_failed()` now uses `transition_to()` when possible, with a logged fallback for impossible transitions (should not occur with current transition table). The direct-assignment bypass that previously violated the state-machine invariant is now defensive-only with an explicit error log.
+  - **Analysis cache TTL:** `expires_at` column added to `analysis_cache` table (Alembic migration 009). `ANALYSIS_CACHE_TTL_DAYS` env var (default 30, range 0–365; 0 = no expiry). Cache lookups filter out expired entries when TTL > 0. Cache writes set `expires_at` when TTL > 0. Watchdog purges expired entries on each 60-second sweep via `cleanup_expired_analysis_cache()`.
+  - **Crash recovery timeout reduction:** `WATCHDOG_PROJECT_EXTRACTING_TIMEOUT_MINUTES` default reduced from 60 to 10 minutes. Since in-process BackgroundTasks cannot survive a server restart, a shorter timeout surfaces crashed extractions faster. The project is still hard-failed (no resume), but the failure is detected sooner.
 
 ## Current Primary Workflow
 
@@ -98,13 +105,18 @@ The older Legacy Scrape page still exists for the `/scrape` pipeline, but it is 
 - Per-page retry endpoint (`POST /projects/{id}/pages/{page_id}/retry`).
 - Rich DOM summary (microdata, full JSON-LD, multi-sample containers) — `ANALYZER_VERSION` still `"1"`.
 - Docker/docker-compose one-command setup.
+- Selector validation at spec save (smoke-test selectors against seed page HTML).
+- Preview-before-extract soft gate (warn if no preview since last spec save).
 - CAPTCHA solving, stealth browser patches, proxy evasion, or challenge bypass (permanent non-goals).
   - OATD currently returns Cloudflare HTTP 403 challenge pages to ScrapGPT from this dev environment; these are detected and failed clearly rather than bypassed.
 
 ## Known Issues
 
-- **DNS rebinding is a known limitation of URL validation.** `validate_url()` blocks private/loopback/metadata IPs at the DNS resolution stage, but a malicious server could rebinding DNS after validation passes. This is a known limitation acknowledged in the URL validator comments, not a new fix item.
-
+- **DNS rebinding is a known limitation of URL validation.** `validate_url()` blocks private/loopback/metadata IPs at the DNS resolution stage, but a malicious server could rebind DNS after validation passes. This is a known limitation acknowledged in the URL validator comments, not a new fix item.
+- **In-process BackgroundTasks cannot survive a server restart.** Analysis and extraction run as FastAPI `BackgroundTasks` in the web process. If the server restarts during extraction, the project is stuck until the watchdog detects it (now 10 minutes for EXTRACTING) and hard-fails it. There is no resume-from-last-page mechanism. The CrawlPage lease reaper recovers individual pages, but nothing automatically re-queues the project. This will be addressed in a future watchdog re-queue mechanism (Option A).
+- **AI selectors are unvalidated until preview.** The LLM proposes CSS selectors from a compressed DOM summary; nothing verifies they match real elements before they're saved in the spec. A user can skip preview and go straight to Extract with zero-match selectors. A selector smoke-test and preview-before-extract soft gate are planned (P2.1).
+- **`normalized_data` column is never populated.** The raw+normalized dual-layer design exists in the schema, but no normalization logic runs. `normalized_data` is always null. Export uses `normalized_data or raw_data`, so there is no user-visible bug, but the column name implies more than it delivers.
+
 ## Verification Snapshot
 
 Commands last run successfully:
@@ -123,14 +135,14 @@ npm.cmd run build
 
 Results:
 
-- Backend: **366 passed**, 46 warnings.
+- Backend: **374 passed**, 1 skipped, 47 warnings.
 - Frontend tests: **70 passed**.
-- Frontend typecheck, lint, and production build: passed.
+- Frontend typecheck, lint, and production build: passed (last verified June 10).
 
 E2E validation:
 
 ```powershell
-venv\Scripts\python.exe tests/validation/run_validation.py
+venv\Scripts\python.exe tests\validation\run_validation.py
 ```
 
 Result: **8/8 scenarios PASSED** (see `docs/reviews/03_phase25_validation.md`).

@@ -190,10 +190,30 @@ async def _insert_discovered_pages(
     return int(result.rowcount or 0)
 
 
-async def _mark_project_failed(db: AsyncSession, project: Project, message: str, code: str) -> None:
-    if project.state != ProjectState.FAILED and project.can_transition_to(ProjectState.FAILED):
+async def _mark_project_failed(
+    db: AsyncSession, project: Project, message: str, code: str
+) -> None:
+    """Transition project to FAILED, enforcing the state machine.
+
+    If the project is already FAILED, just update the error fields.
+    If the transition is not allowed by the state machine, log an
+    error and force the transition as a defensive fallback — this
+    should not happen with the current transition table but must
+    not leave the project in an active state.
+    """
+    if project.state == ProjectState.FAILED:
+        # Already failed — just update error details.
+        pass
+    elif project.can_transition_to(ProjectState.FAILED):
         project.transition_to(ProjectState.FAILED)
     else:
+        logger.error(
+            "extraction.cannot_transition_to_failed",
+            extra={
+                "project_id": project.id,
+                "current_state": project.state.value,
+            },
+        )
         project.state = ProjectState.FAILED
     project.error = message
     project.error_code = code
@@ -374,6 +394,7 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                         source_url=fetched.final_url,
                         project=project,
                         spec=spec,
+                        max_records=settings.MAX_RECORDS_PER_PAGE,
                     )
                     for item in extracted:
                         db.add(

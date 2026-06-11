@@ -7,6 +7,7 @@ import logging
 import time
 import zipfile
 from html import escape
+from typing import Any
 
 from fastapi import (
     APIRouter,
@@ -539,15 +540,32 @@ async def export_project(
     start_time = time.monotonic()
     try:
         await _owned_project(db, user, project_id)
-        records = await list_records(db, project_id, 0, 5000)
-        data = [record.normalized_data or record.raw_data for record in records]
+        total = await count_records(db, project_id)
+        if total > 10_000:
+            logger.warning(
+                "export.large_export",
+                extra={
+                    "project_id": project_id,
+                    "total_records": total,
+                    "format": format,
+                },
+            )
+        # Fetch all records in chunks to avoid silent truncation.
+        # Previous implementation had a hard cap of 5000 that silently
+        # dropped records beyond that limit.
+        chunk_size = 1000
+        data: list[dict[str, Any]] = []
+        for skip in range(0, total, chunk_size):
+            records = await list_records(db, project_id, skip, chunk_size)
+            data.extend(record.normalized_data or record.raw_data for record in records)
         duration_ms = round((time.monotonic() - start_time) * 1000, 1)
         logger.info(
             "export.completed",
             extra={
                 "project_id": project_id,
                 "format": format,
-                "record_count": len(records),
+                "record_count": len(data),
+                "total_records": total,
                 "duration_ms": duration_ms,
             },
         )

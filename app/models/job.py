@@ -149,7 +149,7 @@ VALID_PROJECT_TRANSITIONS: dict[ProjectState, list[ProjectState]] = {
         ProjectState.FAILED,
         ProjectState.CANCELED,
     ],
-    ProjectState.PAUSED: [ProjectState.DISCOVERING, ProjectState.EXTRACTING, ProjectState.CANCELED],
+    ProjectState.PAUSED: [ProjectState.DISCOVERING, ProjectState.EXTRACTING, ProjectState.FAILED, ProjectState.CANCELED],
     ProjectState.COMPLETED: [ProjectState.DISCOVERING],
     ProjectState.FAILED: [],
     ProjectState.CANCELED: [],
@@ -505,6 +505,16 @@ class AnalysisCache(Base):
 
     result: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     normalized_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+        comment=(
+            "When this cache entry expires. Null = no expiry. "
+            "Purged by the watchdog when past now()."
+        ),
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
