@@ -128,6 +128,7 @@ VALID_PROJECT_TRANSITIONS: dict[ProjectState, list[ProjectState]] = {
         ProjectState.CANCELED,
     ],
     ProjectState.PREVIEW_READY: [
+        ProjectState.PREVIEWING,
         ProjectState.DISCOVERING,
         ProjectState.FAILED,
         ProjectState.CANCELED,
