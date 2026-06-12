@@ -23,6 +23,7 @@ from app.models.job import (
 from app.models.provider_config import ProviderConfig
 from app.models.user import User
 from app.services.job_admission import JobAdmissionSuccess
+from app.services.project_retry import RetryError
 
 
 def _user(user_id: int = 1) -> User:
@@ -488,3 +489,84 @@ async def test_delete_db_exception_returns_500_with_message(async_client, app):
     assert response.status_code == 500
     detail = response.json()["detail"]
     assert "lock" in detail.lower() or "background" in detail.lower()
+
+
+# ---------------------------------------------------------------------------
+# Retry endpoint (regression: MissingGreenlet 500 + provider override)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_project_returns_200_and_passes_provider(async_client, app, monkeypatch):
+    project = _project()
+    project.state = ProjectState.FAILED
+    provider = ProviderConfig(id=2, user_id=1, name="alt", provider="openai", model="gpt")
+    captured = {}
+
+    async def fake_retry(db, proj, user, provider_config_id=None):
+        captured["provider_config_id"] = provider_config_id
+        proj.state = ProjectState.QUEUED
+        return proj, provider
+
+    async def fake_execute(**kwargs):
+        return None
+
+    async def fake_record(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[deps.get_current_user] = lambda: _user()
+    app.dependency_overrides[deps.get_db] = lambda: (yield FakeProjectSession(project))
+    monkeypatch.setattr("app.api.v1.endpoints.projects.retry_failed_project", fake_retry)
+    monkeypatch.setattr("app.api.v1.endpoints.projects.execute_job_pipeline", fake_execute)
+    monkeypatch.setattr("app.api.v1.endpoints.projects.record_project_event", fake_record)
+
+    response = await async_client.post(
+        "/api/v1/projects/1/retry", json={"provider_config_id": 2}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["system_state"] == "QUEUED"
+    # The provider override is threaded into the retry service.
+    assert captured["provider_config_id"] == 2
+
+
+@pytest.mark.asyncio
+async def test_retry_without_body_works(async_client, app, monkeypatch):
+    project = _project()
+    project.state = ProjectState.FAILED
+
+    async def fake_retry(db, proj, user, provider_config_id=None):
+        captured_none.append(provider_config_id)
+        proj.state = ProjectState.ANALYSIS_READY
+        return proj, None  # analysis preserved: no provider, no re-queue
+
+    captured_none: list = []
+    async def fake_record(*args, **kwargs):
+        return None
+
+    app.dependency_overrides[deps.get_current_user] = lambda: _user()
+    app.dependency_overrides[deps.get_db] = lambda: (yield FakeProjectSession(project))
+    monkeypatch.setattr("app.api.v1.endpoints.projects.retry_failed_project", fake_retry)
+    monkeypatch.setattr("app.api.v1.endpoints.projects.record_project_event", fake_record)
+
+    response = await async_client.post("/api/v1/projects/1/retry")
+
+    assert response.status_code == 200
+    assert captured_none == [None]
+
+
+@pytest.mark.asyncio
+async def test_retry_non_failed_returns_409(async_client, app, monkeypatch):
+    project = _project()  # QUEUED, not FAILED
+
+    async def fake_retry(db, proj, user, provider_config_id=None):
+        raise RetryError("Only FAILED projects can be retried.", "NOT_FAILED")
+
+    app.dependency_overrides[deps.get_current_user] = lambda: _user()
+    app.dependency_overrides[deps.get_db] = lambda: (yield FakeProjectSession(project))
+    monkeypatch.setattr("app.api.v1.endpoints.projects.retry_failed_project", fake_retry)
+
+    response = await async_client.post("/api/v1/projects/1/retry")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error_code"] == "NOT_FAILED"

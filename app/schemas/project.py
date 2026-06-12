@@ -11,6 +11,17 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 from app.schemas.job import ContentAnalysis, StructuredAnalysis
 
 
+class RetryRequest(BaseModel):
+    """Optional body for retrying a failed project.
+
+    ``provider_config_id`` lets the user re-run a failed analysis with a
+    different provider/model. Ignored when the failure was after analysis
+    (no re-analysis happens).
+    """
+
+    provider_config_id: int | None = None
+
+
 class ProjectEventResponse(BaseModel):
     """One row of the user-facing project activity log."""
 

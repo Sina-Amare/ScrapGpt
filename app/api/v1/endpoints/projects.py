@@ -55,6 +55,7 @@ from app.schemas.project import (
     ProjectResponse,
     RecordPageResponse,
     RecordResponse,
+    RetryRequest,
 )
 from app.services.crawl_scope import ScopeConfirmationError
 from app.services.extraction_mode import resolve_extraction_mode
@@ -841,18 +842,28 @@ async def project_events(
 async def retry_project(
     project_id: int,
     background_tasks: BackgroundTasks,
+    payload: RetryRequest | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ProjectResponse:
     project = await _owned_project(db, user, project_id)
+    provider_override = payload.provider_config_id if payload else None
     try:
-        project, provider = await retry_failed_project(db, project, user)
+        project, provider = await retry_failed_project(
+            db, project, user, provider_config_id=provider_override
+        )
     except RetryError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"message": str(exc), "error_code": exc.error_code},
         ) from exc
     await db.commit()
+    # Refresh so server-onupdate columns (e.g. updated_at) are not left expired,
+    # which would trigger a sync lazy-load -> MissingGreenlet inside the response
+    # builder. Build the response BEFORE queuing the task so a response failure
+    # cannot silently drop the analysis task.
+    await db.refresh(project)
+    response = await _project_response(db, project)
     await record_project_event(
         project.id, user.id, "project.retried",
         message="Project retry requested by user.",
@@ -863,7 +874,7 @@ async def retry_project(
             job_id=project.id,
             provider_config_id=provider.id,
         )
-    return await _project_response(db, project)
+    return response
 
 
 @router.patch(
@@ -888,6 +899,9 @@ async def set_project_session(
             )
     project.browser_session_id = browser_session_id
     await db.commit()
+    # Refresh to reload server-onupdate columns before building the response
+    # (same MissingGreenlet hazard as retry).
+    await db.refresh(project)
     return await _project_response(db, project)
 
 

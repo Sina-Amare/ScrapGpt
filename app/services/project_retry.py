@@ -28,6 +28,7 @@ async def retry_failed_project(
     db: AsyncSession,
     project: Project,
     user: User,
+    provider_config_id: int | None = None,
 ) -> tuple[Project, ProviderConfig | None]:
     """Reset a FAILED project for retry.
 
@@ -35,6 +36,10 @@ async def retry_failed_project(
     - provider_config is set when the caller must re-queue an analysis job.
     - provider_config is None when the project was reset to a ready state (no
       new background job needed; the user re-triggers extraction manually).
+
+    ``provider_config_id`` lets the user retry a failed *analysis* with a
+    different provider/model. It is ignored when analysis already succeeded
+    (no re-analysis happens).
 
     Raises RetryError if the project cannot be retried.
     """
@@ -82,14 +87,18 @@ async def retry_failed_project(
         )
         return project, None
 
-    # Analysis itself failed. Resolve a provider and re-queue.
-    provider = await resolve_provider_for_user(db, user, project.provider_config_id)
+    # Analysis itself failed. Resolve a provider and re-queue. An explicit
+    # override lets the user switch provider/model when the AI call failed.
+    requested = provider_config_id if provider_config_id is not None else project.provider_config_id
+    provider = await resolve_provider_for_user(db, user, requested)
     if provider is None:
         raise RetryError(
             "No provider configured. Add a provider in Settings → Providers before retrying.",
             "NO_PROVIDER_CONFIGURED",
         )
 
+    # Persist the chosen provider so the re-queued analysis uses it.
+    project.provider_config_id = provider.id
     project.transition_to(ProjectState.QUEUED)
 
     logger.info(
