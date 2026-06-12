@@ -33,6 +33,23 @@ class TokenRefreshRequest(BaseModel):
     refresh_token: str = Field(..., description="Valid refresh token")
 
 
+class PasswordResetRequestRequest(BaseModel):
+    """Schema for requesting a password reset code."""
+    email: EmailStr = Field(..., description="Account email address")
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    """Schema for confirming a password reset with the emailed code."""
+    email: EmailStr = Field(..., description="Account email address")
+    code: str = Field(..., min_length=4, max_length=12, description="The emailed reset code")
+    new_password: str = Field(
+        ...,
+        min_length=8,
+        max_length=128,
+        description="The new password (min 8 characters)",
+    )
+
+
 # -----------------------------------------------------------------------------
 # Response Schemas
 # -----------------------------------------------------------------------------
@@ -65,3 +82,8 @@ class MessageResponse(BaseModel):
     """Schema for simple message responses."""
     message: str
     detail: str | None = None
+
+
+class AuthConfigResponse(BaseModel):
+    """Public auth capabilities the frontend uses to gate optional flows."""
+    password_reset_enabled: bool

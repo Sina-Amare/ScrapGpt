@@ -210,6 +210,24 @@ def verify_token(token: str, token_type: str = "access") -> Optional[TokenPayloa
         return None
 
 
+def token_predates_password_change(
+    iat: Optional[int],
+    password_changed_at: Optional[datetime],
+) -> bool:
+    """Return True if a token was issued before the user's last password change.
+
+    Used to invalidate existing access/refresh tokens after a password reset.
+    A token with no ``iat`` is treated as predating any password change (it
+    cannot prove it was issued afterwards). Users who have never changed their
+    password (``password_changed_at`` is None) are unaffected.
+    """
+    if password_changed_at is None:
+        return False
+    if iat is None:
+        return True
+    return iat < int(password_changed_at.timestamp())
+
+
 def decode_token(token: str) -> Optional[dict[str, Any]]:
     """
     Decode a JWT token without verification.

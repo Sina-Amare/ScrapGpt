@@ -255,6 +255,28 @@ class Settings(BaseSettings):
     )
 
     # -------------------------------------------------------------------------
+    # Email (SMTP) — used to deliver password-reset codes
+    # -------------------------------------------------------------------------
+    SMTP_HOST: str = Field(
+        default="",
+        description="SMTP server host. Empty disables outbound email (reset codes are dev-logged instead).",
+    )
+    SMTP_PORT: int = Field(default=587, ge=1, le=65535)
+    SMTP_USERNAME: str = Field(default="")
+    SMTP_PASSWORD: str = Field(default="")
+    SMTP_FROM_EMAIL: str = Field(
+        default="",
+        description="From address for outbound email. Falls back to SMTP_USERNAME when empty.",
+    )
+    SMTP_USE_TLS: bool = Field(default=True, description="Use STARTTLS for the SMTP connection.")
+    PASSWORD_RESET_CODE_TTL_MINUTES: int = Field(
+        default=15,
+        ge=1,
+        le=120,
+        description="Minutes a password-reset code remains valid before it expires.",
+    )
+
+    # -------------------------------------------------------------------------
     # Logging Settings
     # -------------------------------------------------------------------------
     LOG_LEVEL: str = Field(
@@ -275,6 +297,22 @@ class Settings(BaseSettings):
     def is_development(self) -> bool:
         """Check if running in development environment."""
         return self.ENVIRONMENT == "development"
+
+    @property
+    def smtp_configured(self) -> bool:
+        """Whether an SMTP server is configured for outbound email."""
+        return bool(self.SMTP_HOST)
+
+    @property
+    def password_reset_enabled(self) -> bool:
+        """Whether the password-reset flow is usable.
+
+        Enabled when SMTP is configured (codes are emailed), or in development
+        (codes are logged to the server console instead of emailed). When
+        neither holds, the frontend hides the flow so users do not request a
+        code they can never receive.
+        """
+        return self.smtp_configured or self.is_development
     
     @field_validator("SECRET_KEY")
     @classmethod

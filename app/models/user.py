@@ -1,8 +1,9 @@
 """User model for authentication and account ownership."""
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -73,6 +74,15 @@ class User(TimestampMixin, Base):
         ForeignKey("provider_configs.id", ondelete="SET NULL"),
         nullable=True,
         comment="Default provider config for AI calls",
+    )
+
+    password_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment=(
+            "When the password was last changed (e.g. via reset). Access/refresh "
+            "tokens issued before this instant are rejected, invalidating sessions."
+        ),
     )
     
     # -------------------------------------------------------------------------

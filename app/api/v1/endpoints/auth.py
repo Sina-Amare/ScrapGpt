@@ -15,22 +15,33 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.core.config import settings
 from app.core.rate_limit import limiter, AUTH_RATE_LIMIT
 from app.core.security import (
     create_access_token,
     create_refresh_token,
     hash_password,
+    token_predates_password_change,
     verify_password,
     verify_token,
 )
 from app.models.user import User
 from app.schemas.auth import (
+    AuthConfigResponse,
     AuthResponse,
+    MessageResponse,
+    PasswordResetConfirmRequest,
+    PasswordResetRequestRequest,
     TokenRefreshRequest,
     TokenResponse,
     UserLoginRequest,
     UserRegisterRequest,
     UserResponse,
+)
+from app.services.password_reset import (
+    PasswordResetError,
+    confirm_password_reset,
+    request_password_reset,
 )
 
 
@@ -285,6 +296,19 @@ async def refresh_token(
             detail="Account is deactivated",
         )
 
+    # Reject refresh tokens issued before the user's last password change so a
+    # password reset invalidates existing sessions.
+    if token_predates_password_change(token_payload.iat, user.password_changed_at):
+        logger.warning(
+            "auth.token_refresh_failed",
+            extra={"reason": "password_changed", "user_id": user.id},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     logger.info(
         "auth.token_refresh_success",
         extra={"user_id": user.id},
@@ -297,4 +321,75 @@ async def refresh_token(
     return TokenResponse(
         access_token=access_token,
         refresh_token=new_refresh_token,
+    )
+
+
+# -----------------------------------------------------------------------------
+# Password Reset Endpoints
+# -----------------------------------------------------------------------------
+
+@router.post(
+    "/password-reset/request",
+    response_model=MessageResponse,
+    summary="Request a password reset code",
+    description="Email a one-time reset code. Always returns a generic success.",
+)
+@limiter.limit(AUTH_RATE_LIMIT)
+async def password_reset_request(
+    request: Request,
+    payload: PasswordResetRequestRequest,
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Start the forgot-password flow.
+
+    Always returns the same generic message whether or not the email is
+    registered, so the endpoint cannot be used to enumerate accounts.
+    """
+    await request_password_reset(db, payload.email)
+    return MessageResponse(
+        message="If that email is registered, a reset code has been sent.",
+    )
+
+
+@router.post(
+    "/password-reset/confirm",
+    response_model=MessageResponse,
+    summary="Confirm a password reset",
+    description="Verify the emailed code and set a new password.",
+)
+@limiter.limit(AUTH_RATE_LIMIT)
+async def password_reset_confirm(
+    request: Request,
+    payload: PasswordResetConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Complete the forgot-password flow.
+
+    Every failure mode (no such email, wrong/expired code, too many attempts)
+    returns the same generic 400 so the endpoint reveals nothing.
+    """
+    try:
+        await confirm_password_reset(
+            db, payload.email, payload.code, payload.new_password
+        )
+    except PasswordResetError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That reset code is invalid or has expired. Request a new one.",
+        )
+    return MessageResponse(
+        message="Your password has been reset. You can now sign in.",
+    )
+
+
+@router.get(
+    "/config",
+    response_model=AuthConfigResponse,
+    summary="Public auth configuration",
+    description="Capabilities the frontend uses to gate optional auth flows.",
+)
+async def auth_config() -> AuthConfigResponse:
+    """Expose whether optional auth flows (e.g. password reset) are usable."""
+    return AuthConfigResponse(
+        password_reset_enabled=settings.password_reset_enabled,
     )
