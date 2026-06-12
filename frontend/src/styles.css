@@ -108,6 +108,12 @@ select {
   background-size: 28px 28px;
 }
 
+/* ─── Native select dropdown options ─────────────────────────────────────── */
+select option {
+  background-color: var(--c-surface);
+  color: var(--c-ink);
+}
+
 /* ─── Tab bar / scrollbar hide ────────────────────────────────────────────── */
 .scrollbar-none {
   scrollbar-width: none;
