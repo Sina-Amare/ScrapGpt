@@ -113,6 +113,23 @@ async def _progress(db: AsyncSession, project_id: int) -> ExtractionProgress:
         for row in blocked_rows
     ]
 
+    failed_rows = (await db.execute(
+        select(CrawlPage.normalized_url, CrawlPage.block_reason, CrawlPage.error)
+        .where(
+            CrawlPage.project_id == project_id,
+            CrawlPage.state == CrawlPageState.FAILED,
+        )
+        .limit(50)
+    )).all()
+    failed_detail = [
+        BlockedPageDetail(
+            url=row.normalized_url or "",
+            block_reason=row.block_reason or "FAILED",
+            error=row.error,
+        )
+        for row in failed_rows
+    ]
+
     return ExtractionProgress(
         crawl_pages_total=int(crawl_pages_total or 0),
         crawl_pages_pending=page_counts.get("PENDING", 0),
@@ -123,6 +140,7 @@ async def _progress(db: AsyncSession, project_id: int) -> ExtractionProgress:
         extracted_records_total=int(records or 0),
         exports_total=int(exports or 0),
         blocked_pages_detail=blocked_detail,
+        failed_pages_detail=failed_detail,
     )
 
 

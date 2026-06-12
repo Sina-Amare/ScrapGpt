@@ -4,7 +4,7 @@ import { Spinner } from "./Spinner";
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 
 const variantClasses: Record<ButtonVariant, string> = {
-  primary: "bg-teal text-white hover:bg-teal-dark focus-visible:ring-teal",
+  primary: "btn-primary-shimmer bg-teal text-white hover:bg-teal-dark focus-visible:ring-teal",
   secondary:
     "border border-line bg-surface text-ink hover:border-teal hover:text-teal focus-visible:ring-teal",
   ghost: "text-muted hover:bg-porcelain hover:text-ink focus-visible:ring-teal",

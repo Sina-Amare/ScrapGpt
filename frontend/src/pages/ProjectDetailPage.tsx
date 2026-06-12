@@ -24,12 +24,12 @@ import { BrowserSession, CrawlScope, CrawlScopeMode, CrawlScopeStatus, FieldSpec
 
 function ConfidenceBar({ value }: { value: number | null }) {
   const pct = value == null ? 0 : Math.round(value * 100);
-  const color = pct >= 80 ? "bg-success" : pct >= 60 ? "bg-warning" : "bg-danger";
   return (
     <div className="flex items-center gap-3">
-      <div className="relative h-2 flex-1 min-w-0 overflow-hidden rounded-full bg-gray-100">
+      <div className="relative h-2 flex-1 min-w-0 overflow-hidden rounded-full bg-line">
         <motion.div
-          className={`absolute inset-y-0 left-0 rounded-full ${color}`}
+          key={pct}
+          className="absolute inset-y-0 left-0 rounded-full bg-teal"
           initial={{ width: 0 }}
           animate={{ width: `${pct}%` }}
           transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1], delay: 0.1 }}
@@ -621,17 +621,33 @@ export function ProjectDetailPage() {
             ) : null}
             {project.progress.crawl_pages_blocked > 0 && (
               <details className="mt-3">
-                <summary className="cursor-pointer text-sm font-medium text-amber-700">
+                <summary className="cursor-pointer text-sm font-medium text-warning dark:text-amber-400">
                   {project.progress.crawl_pages_blocked} page(s) blocked during extraction
                 </summary>
-                <ul className="mt-2 space-y-1 rounded-md border border-amber-100 bg-amber-50 p-3">
+                <ul className="mt-2 space-y-1 rounded-md border border-amber-300/40 bg-amber-500/[0.06] p-3">
                   {(project.progress.blocked_pages_detail ?? []).map((p, i) => (
-                    <li key={i} className="flex flex-wrap gap-2 text-xs text-gray-600">
-                      <span className="font-mono max-w-sm truncate">{p.url}</span>
-                      <span className="text-amber-700">{p.error ?? p.block_reason}</span>
+                    <li key={i} className="flex flex-wrap gap-2 text-xs text-muted">
+                      <span className="font-mono max-w-sm truncate text-ink">{p.url}</span>
+                      <span className="text-warning dark:text-amber-400">{p.error ?? p.block_reason}</span>
                     </li>
                   ))}
                 </ul>
+              </details>
+            )}
+            {project.progress.crawl_pages_failed > 0 && (
+              <details className="mt-3">
+                <summary className="cursor-pointer text-sm font-medium text-danger dark:text-red-400">
+                  {project.progress.crawl_pages_failed} page(s) failed during extraction
+                </summary>
+                <ul className="mt-2 space-y-1 rounded-md border border-red-300/30 bg-red-500/[0.06] p-3">
+                  {(project.progress.failed_pages_detail ?? []).map((p, i) => (
+                    <li key={i} className="flex flex-wrap gap-2 text-xs text-muted">
+                      <span className="font-mono max-w-sm truncate text-ink">{p.url}</span>
+                      <span className="text-danger dark:text-red-400">{p.error ?? p.block_reason}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-xs text-muted">Use the Retry button to re-attempt failed pages.</p>
               </details>
             )}
             {project.warnings.length ? (
@@ -691,11 +707,10 @@ export function ProjectDetailPage() {
           </section>
 
           {/* Frontier Preview */}
-          <section id="preview" className="scroll-mt-32 card-hover rounded-lg border border-line bg-surface p-6 shadow-panel">
+          <section className="scroll-mt-32 card-hover rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="mb-4">
-              <h2 className="font-bold text-ink">Page preview</h2>
-              <p className="text-sm text-muted">Verify which URLs ScrapeGPT will actually visit before committing to a full extraction. Catches scope misconfiguration early.</p>
-              <p className="mt-1 text-xs text-teal">Generate this before extracting — it shows the exact URL list so you can spot if the wrong pages are included.</p>
+              <h2 className="font-bold text-ink">Crawl preview</h2>
+              <p className="text-sm text-muted">Preview the exact URLs ScrapeGPT will crawl before you start. Run this to confirm scope is correct.</p>
             </div>
             <FrontierPreviewPanel
               preview={project.frontier_preview}
@@ -724,7 +739,7 @@ export function ProjectDetailPage() {
           </section>
 
           {/* Sample Preview */}
-          <section id="sample" className="scroll-mt-32 card-hover rounded-lg border border-line bg-surface p-6 shadow-panel">
+          <section id="preview" className="scroll-mt-32 card-hover rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="font-bold text-ink">Sample preview <span className="text-xs font-normal text-muted">(optional)</span></h2>
@@ -759,15 +774,17 @@ export function ProjectDetailPage() {
               </div>
               <Button
                 onClick={() => { setExtractGateError(null); extractMutation.mutate(false); }}
+                loading={isActive}
                 disabled={
                   !project.preview ||
                   extractMutation.isPending ||
+                  isActive ||
                   scopeNeedsConfirmation
                 }
                 title={scopeNeedsConfirmation ? "Confirm the crawl scope before extracting" : undefined}
               >
                 <Download className="h-4 w-4" />
-                {extractMutation.isPending ? "Extracting..." : "Extract"}
+                {isActive ? "Extracting…" : "Extract"}
               </Button>
             </div>
 
@@ -880,7 +897,7 @@ export function ProjectDetailPage() {
           </section>
 
           {/* Results */}
-          <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
+          <section id="results" className="scroll-mt-32 card-hover rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="font-bold text-ink">Results</h2>
@@ -928,7 +945,7 @@ export function ProjectDetailPage() {
           </section>
 
           {/* Raw Debug Data */}
-          <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
+          <section className="scroll-mt-32 rounded-lg border border-line bg-surface p-6 shadow-panel">
             <button
               type="button"
               className="text-xs text-muted/70 transition hover:text-muted"
@@ -939,7 +956,7 @@ export function ProjectDetailPage() {
             {showDeveloper ? (
               <>
               <p className="mt-1 text-xs text-muted/60">Technical details for debugging or support. Not needed for normal use.</p>
-              <pre className="mt-4 overflow-x-auto rounded-lg border border-line bg-porcelain p-4 text-xs text-ink">
+              <pre className="mt-4 overflow-x-auto rounded-lg border border-line bg-porcelain p-4 font-mono text-xs text-ink">
                 {JSON.stringify(
                   {
                     system_state: project.system_state,

@@ -228,6 +228,7 @@ class ExtractionProgress(BaseModel):
     extracted_records_total: int = 0
     exports_total: int = 0
     blocked_pages_detail: list[BlockedPageDetail] = Field(default_factory=list)
+    failed_pages_detail: list[BlockedPageDetail] = Field(default_factory=list)
 
 
 class ProjectListItem(BaseModel):

@@ -367,6 +367,7 @@ export type ExtractionProgress = {
   extracted_records_total: number;
   exports_total: number;
   blocked_pages_detail: BlockedPageDetail[];
+  failed_pages_detail?: BlockedPageDetail[];
 };
 
 export type ProjectListItem = {

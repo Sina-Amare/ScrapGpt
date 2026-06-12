@@ -446,6 +446,7 @@ export function ProvidersPage() {
   const [dialog, setDialog] = useState<"create" | "edit" | null>(null);
   const [selected, setSelected] = useState<ProviderConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [testingId, setTestingId] = useState<number | null>(null);
   const [lastTest, setLastTest] = useState<{
     name: string;
     result: ProviderTestResponse;
@@ -518,12 +519,14 @@ export function ProvidersPage() {
 
   const test = useMutation({
     mutationFn: (id: number) => api.testProvider(id),
+    onMutate: (id) => setTestingId(id),
     onSuccess: (result, id) => {
       const name = providers.data?.find((p) => p.id === id)?.name ?? `Provider #${id}`;
       setLastTest({ name, result });
       void invalidate();
     },
-    onError: (err) => setError(providerError(err))
+    onError: (err) => setError(providerError(err)),
+    onSettled: () => setTestingId(null),
   });
 
   const reveal = useMutation({
@@ -591,10 +594,11 @@ export function ProvidersPage() {
                       variant="secondary"
                       className="h-9 px-3"
                       onClick={() => test.mutate(provider.id)}
+                      loading={testingId === provider.id}
                       disabled={test.isPending}
                     >
                       <TestTube2 className="h-4 w-4" />
-                      Test
+                      {testingId === provider.id ? "Testing…" : "Test"}
                     </Button>
                     <Button
                       variant="secondary"
@@ -631,7 +635,7 @@ export function ProvidersPage() {
             ))}
           </Table>
         ) : (
-          <div className="rounded-md border border-line bg-surface p-10 text-center shadow-panel">
+          <div className="card-hover rounded-md border border-line bg-surface p-10 text-center shadow-panel">
             <KeyRound className="mx-auto h-10 w-10 text-teal" />
             <h2 className="mt-4 text-lg font-bold text-ink">No providers configured</h2>
             <p className="mx-auto mt-2 max-w-md text-sm text-muted">

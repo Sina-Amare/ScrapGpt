@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { motion } from "motion/react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -80,7 +81,7 @@ export function ProjectsPage() {
       ) : projects.error ? (
         <Alert tone="danger">Could not load projects.</Alert>
       ) : !projects.data?.length ? (
-        <div className="rounded-lg border border-line bg-surface p-12 text-center shadow-panel">
+        <div className="card-hover rounded-lg border border-line bg-surface p-12 text-center shadow-panel">
           <p className="text-sm text-muted">
             No projects yet.{" "}
             <Link to="/projects/new" className="font-semibold text-teal hover:text-teal-dark">
@@ -90,8 +91,14 @@ export function ProjectsPage() {
         </div>
       ) : (
         <Table headings={["#", "URL", "Type", "Status", "Fields", "Confidence", "Updated", "Actions"]}>
-          {projects.data.map((project) => (
-            <tr key={project.id} className="transition-colors hover:bg-teal-soft/40">
+          {projects.data.map((project, index) => (
+            <motion.tr
+              key={project.id}
+              className="transition-colors hover:bg-teal-soft/40"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: Math.min(index, 8) * 0.045, duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+            >
               <td className="px-4 py-3 font-mono text-sm font-semibold text-ink">
                 {project.id}
               </td>
@@ -140,7 +147,7 @@ export function ProjectsPage() {
                   </button>
                 </div>
               </td>
-            </tr>
+            </motion.tr>
           ))}
         </Table>
       )}

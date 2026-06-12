@@ -1,3 +1,4 @@
+import { motion } from "motion/react";
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { PageHeader } from "../components/ui/PageHeader";
@@ -5,7 +6,12 @@ import { PageHeader } from "../components/ui/PageHeader";
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-lg border border-line bg-surface shadow-panel">
+    <motion.div
+      className="card-hover rounded-lg border border-line bg-surface shadow-panel"
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+    >
       <button
         type="button"
         className="flex w-full items-center justify-between px-6 py-4 text-left"
@@ -23,27 +29,31 @@ function Section({ title, children }: { title: string; children: React.ReactNode
           {children}
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }
 
 function Pipeline() {
   const steps = [
-    { label: "1. URL", color: "bg-teal" },
-    { label: "2. Fetch", color: "bg-teal" },
-    { label: "3. AI Analysis", color: "bg-teal" },
-    { label: "4. Field Setup", color: "bg-teal-soft border border-teal text-teal" },
-    { label: "5. Extract", color: "bg-teal" },
-    { label: "6. Export", color: "bg-teal" },
+    { n: 1, label: "URL" },
+    { n: 2, label: "Fetch" },
+    { n: 3, label: "AI Analysis" },
+    { n: 4, label: "Field Setup", current: true },
+    { n: 5, label: "Extract" },
+    { n: 6, label: "Export" },
   ];
   return (
     <div className="flex flex-wrap items-center gap-2 py-2">
       {steps.map((step, i) => (
-        <div key={step.label} className="flex items-center gap-2">
+        <div key={step.n} className="flex items-center gap-2">
           <span
-            className={`rounded-md px-3 py-1.5 text-xs font-bold text-white ${step.color}`}
+            className={`rounded-md px-3 py-1.5 text-xs font-bold text-white ${
+              step.current
+                ? "bg-teal ring-2 ring-teal/50 ring-offset-1 ring-offset-surface"
+                : "bg-teal/80"
+            }`}
           >
-            {step.label}
+            {step.n}. {step.label}
           </span>
           {i < steps.length - 1 && (
             <span className="text-muted">→</span>
@@ -63,17 +73,38 @@ export function HelpPage() {
         {/* Pipeline overview */}
         <Section title="How ScrapeGPT works">
           <p className="mb-4 text-muted">
-            ScrapeGPT automates web scraping in six steps:
+            ScrapeGPT automates web scraping in six steps. Step 4 is highlighted because it requires your input — ScrapeGPT pauses and waits for you to review the detected fields before extracting.
           </p>
           <Pipeline />
           <ol className="mt-4 space-y-2 text-muted">
             <li><strong className="text-ink">1. URL</strong> — You paste the page you want to scrape.</li>
             <li><strong className="text-ink">2. Fetch</strong> — ScrapeGPT downloads the page (with optional browser rendering for JS-heavy sites).</li>
             <li><strong className="text-ink">3. AI Analysis</strong> — The LLM reads the HTML and identifies what structured data exists and how to extract it.</li>
-            <li><strong className="text-ink">4. Field Setup</strong> — You review the detected fields, rename them, and choose which to include.</li>
+            <li><strong className="text-ink">4. Field Setup</strong> — You review the detected fields, rename them, and choose which to include. ScrapeGPT waits here until you confirm.</li>
             <li><strong className="text-ink">5. Extract</strong> — ScrapeGPT crawls the pages in the scope you selected and extracts data using CSS selectors.</li>
             <li><strong className="text-ink">6. Export</strong> — Download results as CSV, JSON, or a styled XLSX file.</li>
           </ol>
+        </Section>
+
+        {/* Advanced options */}
+        <Section title="Advanced options (New Extraction)">
+          <p className="mb-4 text-muted">
+            These settings are hidden under <strong className="text-ink">Advanced options</strong> on the new extraction form. The defaults work for most sites — only change them if you run into issues.
+          </p>
+          <div className="space-y-4">
+            <div className="rounded-lg border border-line bg-porcelain p-4">
+              <p className="font-semibold text-ink">What are you extracting?</p>
+              <p className="mt-1 text-sm text-muted">
+                Helps the AI pick the right analysis strategy. <strong className="text-ink">Structured data</strong> targets repeating records like products, listings, or tables. <strong className="text-ink">Content</strong> targets long-form text like articles or documentation. Leave blank to let ScrapeGPT decide — it's correct 80% of the time.
+              </p>
+            </div>
+            <div className="rounded-lg border border-line bg-porcelain p-4">
+              <p className="font-semibold text-ink">Page rendering</p>
+              <p className="mt-1 text-sm text-muted">
+                Controls how the page is fetched. <strong className="text-ink">Automatic</strong> tries static HTML first. Use <strong className="text-ink">Browser rendering</strong> if the page uses JavaScript frameworks (React, Vue, Angular) and the static fetch returns empty content. <strong className="text-ink">Static HTML only</strong> is fastest but won't capture JS-rendered data.
+              </p>
+            </div>
+          </div>
         </Section>
 
         {/* Crawl scopes */}
@@ -110,7 +141,7 @@ export function HelpPage() {
               </tr>
             </tbody>
           </table>
-          <p className="mt-3 text-xs text-muted">Use <strong>Page preview</strong> to verify which URLs will be crawled before committing to a full extraction run.</p>
+          <p className="mt-3 text-xs text-muted">Use <strong>Crawl preview</strong> to verify which URLs will be crawled before committing to a full extraction run.</p>
         </Section>
 
         {/* USE vs REQUIRED */}
@@ -143,7 +174,7 @@ export function HelpPage() {
             <tbody className="divide-y divide-line text-muted">
               <tr><td className="py-2.5 pr-4 font-semibold text-ink">Text</td><td className="py-2.5">Titles, descriptions, names — any free-form string</td></tr>
               <tr><td className="py-2.5 pr-4 font-semibold text-ink">Number</td><td className="py-2.5">Prices, ratings, counts — numeric values</td></tr>
-              <tr><td className="py-2.5 pr-4 font-semibold text-ink">URL</td><td className="py-2.5">Links, image sources, canonical URLs</td></tr>
+              <tr><td className="py-2.5 pr-4 font-semibold text-ink">URL</td><td className="py-2.5">Links, image sources, canonical URLs (not a filter — it's the data type of this field)</td></tr>
               <tr><td className="py-2.5 pr-4 font-semibold text-ink">Date</td><td className="py-2.5">Published dates, timestamps</td></tr>
               <tr><td className="py-2.5 pr-4 font-semibold text-ink">Boolean</td><td className="py-2.5">In stock / available / true/false flags</td></tr>
               <tr><td className="py-2.5 pr-4 font-semibold text-ink">Image</td><td className="py-2.5">Product images, thumbnails — extracts the src URL</td></tr>
@@ -154,7 +185,7 @@ export function HelpPage() {
         {/* Confidence score */}
         <Section title="Confidence score">
           <div className="space-y-2 text-muted">
-            <p>The confidence score is the AI's certainty that the CSS selectors it generated will reliably extract the correct data.</p>
+            <p>The confidence score reflects the AI's certainty that its CSS selectors will reliably extract the correct data. It's shown as a violet bar — the fuller the bar, the more confident.</p>
             <ul className="ml-4 list-disc space-y-1">
               <li><strong className="text-ink">80–100%</strong> — Good. Selectors are specific and stable.</li>
               <li><strong className="text-ink">60–79%</strong> — Needs review. May work but check the sample preview.</li>
@@ -164,11 +195,11 @@ export function HelpPage() {
           </div>
         </Section>
 
-        {/* Page preview vs Sample preview */}
-        <Section title="Page preview vs Sample preview">
+        {/* Crawl preview vs Sample preview */}
+        <Section title="Understanding the two previews">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="rounded-lg border border-line bg-porcelain p-4">
-              <p className="font-bold text-ink">Page preview</p>
+              <p className="font-bold text-ink">Crawl preview</p>
               <p className="mt-1 text-muted">Shows the <em>list of URLs</em> ScrapeGPT will crawl based on your scope. Run this first to verify the right pages are included. Catches scope misconfiguration before you spend time extracting.</p>
             </div>
             <div className="rounded-lg border border-line bg-porcelain p-4">
@@ -191,6 +222,13 @@ export function HelpPage() {
           </div>
         </Section>
 
+        {/* Theme */}
+        <Section title="Light &amp; dark mode">
+          <p className="text-muted">
+            Use the <strong className="text-ink">sun/moon icon</strong> in the top-right header to toggle between light and dark mode. Your preference is saved in the browser and persists across sessions. The default follows your system's color scheme preference.
+          </p>
+        </Section>
+
         {/* FAQ */}
         <Section title="FAQ">
           <div className="space-y-5 text-muted">
@@ -200,11 +238,15 @@ export function HelpPage() {
             </div>
             <div>
               <p className="font-semibold text-ink">Why are rows missing from my results?</p>
-              <p>Possible causes: (1) You marked a field as Required and some rows didn't have a value for it. (2) Some pages were blocked by bot protection — check the extraction progress for blocked pages. (3) The page limit was reached before all pages were crawled.</p>
+              <p>Possible causes: (1) You marked a field as Required and some rows didn't have a value for it. (2) Some pages were blocked by bot protection — check the extraction progress for blocked/failed pages. (3) The page limit was reached before all pages were crawled.</p>
+            </div>
+            <div>
+              <p className="font-semibold text-ink">Some pages failed — can I retry just those?</p>
+              <p>Not individually. Use the <strong className="text-ink">Retry</strong> button in the project overview to re-attempt the entire extraction. Failed page details (URL + error) are shown in the extraction section so you can diagnose what went wrong first.</p>
             </div>
             <div>
               <p className="font-semibold text-ink">What is "Raw debug data"?</p>
-              <p>It's the raw internal state of the project — the spec, analysis results, fetch metadata, and frontier preview. Useful for debugging unexpected behavior. Not needed for normal use.</p>
+              <p>It's the raw internal state of the project — the spec, analysis results, fetch metadata, and crawl preview. Useful for debugging unexpected behavior. Not needed for normal use.</p>
             </div>
             <div>
               <p className="font-semibold text-ink">My confidence score is low — should I re-analyze?</p>

@@ -1,24 +1,24 @@
 import type { Config } from "tailwindcss";
 
 export default {
+  darkMode: "class",
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        porcelain: "#F8F9FB",
-        surface: "#FFFFFF",
-        ink: "#0F172A",
-        muted: "#64748B",
-        line: "#E2E8F0",
-        // Brand color is indigo — all components use "teal" class names so we
-        // swap the values here rather than renaming across every file.
+        porcelain: "var(--c-porcelain)",
+        surface: "var(--c-surface)",
+        ink: "var(--c-ink)",
+        muted: "var(--c-muted)",
+        line: "var(--c-line)",
+        // Brand accent — violet. Components use "teal" class names (historical alias).
         teal: {
-          DEFAULT: "#6366F1",
-          dark: "#4F46E5",
-          soft: "#EEF2FF",
-          subtle: "#C7D2FE",
+          DEFAULT: "#8B5CF6",
+          dark: "#7C3AED",
+          soft: "var(--c-teal-soft)",
+          subtle: "#C4B5FD",
         },
-        accent: "#6366F1",
+        accent: "#8B5CF6",
         success: "#15803D",
         warning: "#B45309",
         danger: "#B91C1C",

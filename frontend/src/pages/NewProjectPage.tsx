@@ -90,7 +90,7 @@ export function NewProjectPage() {
       <PageHeader title="New Extraction" eyebrow="Project setup" />
 
       <div className="grid gap-6 lg:grid-cols-[420px_1fr]">
-        <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
+        <section className="card-hover rounded-lg border border-line bg-surface p-6 shadow-panel">
           <div className="mb-6 flex items-center gap-3">
             <div className="grid h-10 w-10 place-items-center rounded-md bg-teal-soft text-teal">
               <BrainCog className="h-5 w-5" />
@@ -120,31 +120,31 @@ export function NewProjectPage() {
               />
             </Field>
 
-            <Field label="What are you extracting?" hint="Leave blank and ScrapeGPT will decide.">
-              <Select
-                value={extractionMode}
-                onChange={(event) => setExtractionMode(event.target.value as ExtractionMode | "")}
-              >
-                <option value="">Let ScrapeGPT decide</option>
-                <option value="STRUCTURED">Structured data - products, listings, directories, tables</option>
-                <option value="CONTENT">Content - articles, docs, knowledge pages</option>
-              </Select>
-            </Field>
-
             <button
               type="button"
               className="flex h-10 items-center justify-between rounded-md border border-line px-3 text-sm font-semibold text-muted transition hover:bg-porcelain hover:text-ink"
               onClick={() => setConnectionOpen((value) => !value)}
             >
-              <span>Connection and rendering</span>
+              <span>Advanced options</span>
               {connectionOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </button>
 
             {connectionOpen ? (
               <div className="grid gap-4 rounded-lg border border-line bg-porcelain p-4">
+                <Field label="What are you extracting?" hint="Leave blank and ScrapeGPT will decide automatically.">
+                  <Select
+                    value={extractionMode}
+                    onChange={(event) => setExtractionMode(event.target.value as ExtractionMode | "")}
+                  >
+                    <option value="">Let ScrapeGPT decide</option>
+                    <option value="STRUCTURED">Structured data - products, listings, directories, tables</option>
+                    <option value="CONTENT">Content - articles, docs, knowledge pages</option>
+                  </Select>
+                </Field>
+
                 <Field
                   label="Page rendering"
-                  hint="Use browser rendering if the page is empty or heavily interactive."
+                  hint="Use browser rendering if the page is empty or heavily JS-driven."
                 >
                   <Select
                     value={renderMode}
@@ -179,7 +179,7 @@ export function NewProjectPage() {
           </form>
         </section>
 
-        <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
+        <section className="card-hover rounded-lg border border-line bg-surface p-6 shadow-panel">
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
               <h2 className="font-bold text-ink">Project status</h2>

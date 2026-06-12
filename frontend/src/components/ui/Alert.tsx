@@ -4,10 +4,10 @@ import { ReactNode } from "react";
 type AlertTone = "info" | "success" | "danger" | "warning";
 
 const toneClasses: Record<AlertTone, string> = {
-  info: "border-line bg-white text-ink",
-  success: "border-green-200 bg-green-50 text-success",
-  danger: "border-red-200 bg-red-50 text-danger",
-  warning: "border-amber-200 bg-amber-50 text-amber-800"
+  info:    "border-line bg-porcelain text-ink",
+  success: "border-green-300/50 bg-green-500/[0.08] text-success dark:border-green-500/30 dark:text-green-400",
+  danger:  "border-red-300/50 bg-red-500/[0.08] text-danger dark:border-red-500/30 dark:text-red-400",
+  warning: "border-amber-300/50 bg-amber-500/[0.08] text-warning dark:border-amber-500/30 dark:text-amber-400",
 };
 
 const icons = {

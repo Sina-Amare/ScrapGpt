@@ -9,8 +9,10 @@ import {
   List,
   LogOut,
   Menu,
+  Moon,
   Plus,
   Settings2,
+  Sun,
   X
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
@@ -19,6 +21,7 @@ import { NavLink, useLocation } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { useTheme } from "../lib/useTheme";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: Activity, end: true },
@@ -91,6 +94,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { displayEmail, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
+  const { dark, toggle } = useTheme();
   const health = useQuery({
     queryKey: ["health-ready"],
     queryFn: () => api.getHealth("/health/ready"),
@@ -151,20 +155,40 @@ export function AppShell({ children }: { children: ReactNode }) {
               >
                 <Menu className="h-5 w-5" />
               </button>
-              <div
+              <motion.div
                 className={`h-2.5 w-2.5 rounded-full ${
                   health.isSuccess ? "bg-success" : "bg-warning"
                 }`}
+                animate={health.isSuccess
+                  ? { scale: [1, 1.25, 1] }
+                  : { opacity: [1, 0.45, 1] }
+                }
+                transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }}
                 aria-label={health.isSuccess ? "Backend ready" : "Backend not ready"}
               />
               <span className="text-sm font-semibold text-muted">
                 {health.isSuccess ? "Backend ready" : "Backend not ready"}
               </span>
             </div>
-            <div className="flex min-w-0 items-center gap-3">
+            <div className="flex min-w-0 items-center gap-2">
               <span className="hidden max-w-52 truncate text-sm font-semibold text-ink sm:block">
                 {displayEmail ?? "Signed in"}
               </span>
+              <button
+                type="button"
+                onClick={toggle}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted hover:bg-porcelain hover:text-ink transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-teal"
+                aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+              >
+                <motion.div
+                  key={dark ? "moon" : "sun"}
+                  initial={{ rotate: -30, scale: 0.7, opacity: 0 }}
+                  animate={{ rotate: 0, scale: 1, opacity: 1 }}
+                  transition={{ duration: 0.25, ease: "easeOut" }}
+                >
+                  {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                </motion.div>
+              </button>
               <Button variant="secondary" onClick={logout}>
                 <LogOut className="h-4 w-4" />
                 Logout

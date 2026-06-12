@@ -1,12 +1,62 @@
-@import 'geist/dist/font.css';
+/* ─── Design tokens: light mode ──────────────────────────────────────────── */
+:root {
+  --c-surface:    #FFFFFF;
+  --c-porcelain:  #F8F9FB;
+  --c-ink:        #0F172A;
+  --c-muted:      #64748B;
+  --c-line:       #E2E8F0;
+  --c-body:       #F5F6FC;
+  --c-grid:       rgba(139, 92, 246, 0.03);
+  --c-teal-soft:  #F5F3FF;
+}
+
+/* ─── Design tokens: dark mode ───────────────────────────────────────────── */
+html.dark {
+  --c-surface:    #141726;
+  --c-porcelain:  #0F1120;
+  --c-ink:        #EFF0F6;
+  --c-muted:      #7D849C;
+  --c-line:       #1E2235;
+  --c-body:       #0A0C16;
+  --c-grid:       rgba(139, 92, 246, 0.055);
+  --c-teal-soft:  #1E1535;
+}
+
+@font-face {
+  font-family: "Geist";
+  src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ─── Smooth theme transitions ───────────────────────────────────────────── */
+*, *::before, *::after {
+  transition-property: background-color, border-color, color, fill, stroke, box-shadow;
+  transition-duration: 0.18s;
+  transition-timing-function: ease;
+}
+
+/* Opt-out for animated elements where extra transition looks wrong */
+[data-no-transition], [data-no-transition] *, .animate-spin {
+  transition: none !important;
+}
+
 :root {
-  color: #0F172A;
-  background: #F8F9FB;
+  color: var(--c-ink);
+  background: var(--c-body);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -23,9 +73,9 @@ body {
   min-height: 100vh;
   font-family: Geist, ui-sans-serif, system-ui, -apple-system, sans-serif;
   background:
-    linear-gradient(rgba(99, 102, 241, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(99, 102, 241, 0.035) 1px, transparent 1px),
-    #F8F9FB;
+    linear-gradient(var(--c-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--c-grid) 1px, transparent 1px),
+    var(--c-body);
   background-size: 32px 32px;
   animation: grid-drift 80s linear infinite;
 }
@@ -42,20 +92,68 @@ select {
   font: inherit;
 }
 
-/* Card hover lift — add class="card-hover" to section cards */
+/* ─── Card hover lift ─────────────────────────────────────────────────────── */
 .card-hover {
-  transition: box-shadow 0.22s ease, transform 0.22s ease;
+  transition: box-shadow 0.22s ease, transform 0.22s ease !important;
 }
 .card-hover:hover {
-  box-shadow: 0 8px 32px -4px rgba(99, 102, 241, 0.1),
-              0 4px 12px -2px rgba(99, 102, 241, 0.06);
+  box-shadow: 0 8px 32px -4px rgba(139, 92, 246, 0.14),
+              0 4px 12px -2px rgba(139, 92, 246, 0.08);
   transform: translateY(-1px);
 }
 
-/* Tab bar scrollbar hide */
+/* ─── Auth page dark dot grid ─────────────────────────────────────────────── */
+.auth-dot-grid {
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.07) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* ─── Tab bar / scrollbar hide ────────────────────────────────────────────── */
 .scrollbar-none {
   scrollbar-width: none;
 }
 .scrollbar-none::-webkit-scrollbar {
   display: none;
+}
+
+/* ─── Auth input (dark glassmorphism) ─────────────────────────────────────── */
+.auth-input {
+  height: 2.75rem;
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0 0.875rem;
+  font-size: 0.875rem;
+  color: #fff;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s !important;
+}
+.auth-input::placeholder {
+  color: rgba(255, 255, 255, 0.22);
+}
+.auth-input:focus {
+  border-color: rgba(139, 92, 246, 0.7);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.18);
+}
+
+/* ─── Primary button shimmer sweep ───────────────────────────────────────── */
+.btn-primary-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.btn-primary-shimmer::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -60%;
+  width: 40%;
+  height: 200%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.14), transparent);
+  transform: skewX(-20deg);
+  transition: left 0.55s ease !important;
+  pointer-events: none;
+}
+.btn-primary-shimmer:not(:disabled):hover::after {
+  left: 120%;
 }
