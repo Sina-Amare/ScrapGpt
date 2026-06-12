@@ -12,14 +12,14 @@
 
 /* ─── Design tokens: dark mode ───────────────────────────────────────────── */
 html.dark {
-  --c-surface:    #141726;
-  --c-porcelain:  #0F1120;
-  --c-ink:        #EFF0F6;
-  --c-muted:      #7D849C;
-  --c-line:       #1E2235;
-  --c-body:       #0A0C16;
-  --c-grid:       rgba(139, 92, 246, 0.055);
-  --c-teal-soft:  #1E1535;
+  --c-surface:    #1C1C22;
+  --c-porcelain:  #131317;
+  --c-ink:        #EDEDF0;
+  --c-muted:      #7E808C;
+  --c-line:       #25252D;
+  --c-body:       #0E0E13;
+  --c-grid:       rgba(255, 255, 255, 0.018);
+  --c-teal-soft:  #1E1A30;
 }
 
 @font-face {
