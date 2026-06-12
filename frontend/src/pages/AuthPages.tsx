@@ -1,9 +1,11 @@
+import { useQuery } from "@tanstack/react-query";
 import { Eye, EyeOff, Moon, Sun } from "lucide-react";
 import { motion } from "motion/react";
 import { FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Alert } from "../components/ui/Alert";
 import { Button } from "../components/ui/Button";
+import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
 
@@ -252,6 +254,12 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const authConfig = useQuery({
+    queryKey: ["auth-config"],
+    queryFn: api.getAuthConfig,
+    staleTime: 5 * 60 * 1000,
+    retry: false
+  });
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -290,10 +298,16 @@ export function LoginPage() {
             autoComplete="current-password"
             required
           />
-          <p className="text-right text-xs text-white/20">
-            Forgot password?{" "}
-            <span className="cursor-default font-medium text-white/28">Not yet available</span>
-          </p>
+          {authConfig.data?.password_reset_enabled ? (
+            <p className="text-right text-xs text-white/45">
+              <Link
+                to="/forgot-password"
+                className="font-medium text-teal-subtle transition-colors hover:text-white/80"
+              >
+                Forgot password?
+              </Link>
+            </p>
+          ) : null}
         </div>
 
         <Button
@@ -399,6 +413,149 @@ export function RegisterPage() {
           </Link>
         </p>
       </form>
+    </AuthFrame>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Forgot password (request code -> confirm code + new password -> done)
+// ---------------------------------------------------------------------------
+
+function BackToLogin() {
+  return (
+    <p className="text-center text-sm text-white/55">
+      Remembered it?{" "}
+      <Link
+        className="font-semibold text-teal-subtle transition-colors hover:text-white/80"
+        to="/login"
+      >
+        Back to sign in
+      </Link>
+    </p>
+  );
+}
+
+export function ForgotPasswordPage() {
+  const [step, setStep] = useState<"request" | "confirm" | "done">("request");
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function onRequest(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      const response = await api.requestPasswordReset(email);
+      setNotice(response.message);
+      setStep("confirm");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not send a reset code.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function onConfirm(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      await api.confirmPasswordReset({ email, code, new_password: password });
+      setStep("done");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not reset your password.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const subtitle =
+    step === "request"
+      ? "Enter your account email and we'll send a reset code."
+      : step === "confirm"
+        ? "Enter the code we emailed and choose a new password."
+        : "Your password has been updated.";
+
+  return (
+    <AuthFrame title="Reset password" subtitle={subtitle}>
+      {step === "request" ? (
+        <form className="grid gap-4" onSubmit={onRequest}>
+          {error ? <Alert tone="danger">{error}</Alert> : null}
+          <AuthInput
+            label="Email"
+            type="email"
+            value={email}
+            onChange={setEmail}
+            autoComplete="email"
+            required
+            placeholder="you@example.com"
+          />
+          <Button
+            type="submit"
+            className="mt-1 h-11 w-full rounded-xl text-sm font-semibold"
+            disabled={submitting}
+          >
+            {submitting ? "Sending…" : "Send reset code"}
+          </Button>
+          <BackToLogin />
+        </form>
+      ) : step === "confirm" ? (
+        <form className="grid gap-4" onSubmit={onConfirm}>
+          {notice ? <Alert tone="info">{notice}</Alert> : null}
+          {error ? <Alert tone="danger">{error}</Alert> : null}
+          <AuthInput
+            label="Reset code"
+            value={code}
+            onChange={setCode}
+            autoComplete="one-time-code"
+            required
+            placeholder="6-digit code"
+          />
+          <AuthPasswordField
+            label="New password"
+            value={password}
+            onChange={setPassword}
+            autoComplete="new-password"
+            required
+            hint="Minimum 8 characters."
+          />
+          <Button
+            type="submit"
+            className="mt-1 h-11 w-full rounded-xl text-sm font-semibold"
+            disabled={submitting}
+          >
+            {submitting ? "Resetting…" : "Reset password"}
+          </Button>
+          <button
+            type="button"
+            onClick={() => {
+              setStep("request");
+              setError(null);
+              setNotice(null);
+            }}
+            className="text-center text-xs text-white/45 transition hover:text-white/80"
+          >
+            Didn't get a code? Start over
+          </button>
+          <BackToLogin />
+        </form>
+      ) : (
+        <div className="grid gap-4">
+          <Alert tone="success">
+            Your password has been reset. You can now sign in with your new password.
+          </Alert>
+          <Link
+            to="/login"
+            className="inline-flex h-11 w-full items-center justify-center rounded-xl bg-teal text-sm font-semibold text-white transition hover:bg-teal-dark"
+          >
+            Back to sign in
+          </Link>
+        </div>
+      )}
     </AuthFrame>
   );
 }

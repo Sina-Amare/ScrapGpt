@@ -5,7 +5,7 @@ import { AppShell } from "./layout/AppShell";
 import { ProtectedRoute, PublicRoute } from "./layout/RouteGuards";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { ThemeProvider } from "./lib/theme";
-import { LoginPage, RegisterPage } from "./pages/AuthPages";
+import { ForgotPasswordPage, LoginPage, RegisterPage } from "./pages/AuthPages";
 import { DashboardPage } from "./pages/DashboardPage";
 import { HealthPage } from "./pages/HealthPage";
 import { HelpPage } from "./pages/HelpPage";
@@ -69,6 +69,7 @@ export function App() {
             <Route element={<PublicRoute />}>
               <Route path="/login" element={<LoginPage />} />
               <Route path="/register" element={<RegisterPage />} />
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
             </Route>
             <Route element={<ProtectedRoute />}>
               <Route path="/*" element={<ProtectedShell />} />

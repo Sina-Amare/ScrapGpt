@@ -1,8 +1,11 @@
 import {
+  AuthConfigResponse,
   AuthResponse,
   BrowserSession,
   BrowserSessionCreateInput,
   CrawlScope,
+  MessageResponse,
+  PasswordResetConfirmInput,
   ExtractionSpecResponse,
   FieldSpec,
   FrontierPreviewResponse,
@@ -207,6 +210,34 @@ export const api = {
   },
 
   refreshAccessToken,
+
+  getAuthConfig(): Promise<AuthConfigResponse> {
+    return rawRequest<AuthConfigResponse>("/auth/config", {}, false);
+  },
+
+  async requestPasswordReset(email: string): Promise<MessageResponse> {
+    return rawRequest<MessageResponse>(
+      "/auth/password-reset/request",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
+      },
+      false
+    );
+  },
+
+  async confirmPasswordReset(input: PasswordResetConfirmInput): Promise<MessageResponse> {
+    return rawRequest<MessageResponse>(
+      "/auth/password-reset/confirm",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input)
+      },
+      false
+    );
+  },
 
   getHealth(path: "/health" | "/health/live" | "/health/ready"): Promise<HealthResponse> {
     return rawRequest<HealthResponse>(path, {}, false);

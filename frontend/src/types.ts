@@ -17,6 +17,21 @@ export type AuthResponse = {
   tokens: TokenResponse;
 };
 
+export type MessageResponse = {
+  message: string;
+  detail?: string | null;
+};
+
+export type AuthConfigResponse = {
+  password_reset_enabled: boolean;
+};
+
+export type PasswordResetConfirmInput = {
+  email: string;
+  code: string;
+  new_password: string;
+};
+
 export type ProviderConfig = {
   id: number;
   name: string;
