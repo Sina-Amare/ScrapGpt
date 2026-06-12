@@ -141,20 +141,20 @@ function AuthFrame({
       <div
         className="auth-glow pointer-events-none absolute"
         style={{
-          top: "-10%", left: "-5%",
-          width: 600, height: 500,
+          top: "-12%", left: "-8%",
+          width: 680, height: 560,
           borderRadius: "50%",
-          background: "radial-gradient(ellipse, rgba(34,114,255,0.07) 0%, transparent 70%)",
+          background: "radial-gradient(ellipse, rgba(34,114,255,0.28) 0%, transparent 70%)",
         }}
       />
-      {/* Glow 2 — lower-right */}
+      {/* Glow 2 — lower-right (teal accent) */}
       <div
         className="auth-glow-alt pointer-events-none absolute"
         style={{
-          bottom: "-15%", right: "-8%",
-          width: 500, height: 440,
+          bottom: "-18%", right: "-10%",
+          width: 560, height: 500,
           borderRadius: "50%",
-          background: "radial-gradient(ellipse, rgba(34,114,255,0.05) 0%, transparent 70%)",
+          background: "radial-gradient(ellipse, rgba(45,212,191,0.18) 0%, transparent 70%)",
         }}
       />
 

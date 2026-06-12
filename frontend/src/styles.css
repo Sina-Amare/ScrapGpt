@@ -187,36 +187,41 @@ select option {
 
 /* ─── Auth page background animations ────────────────────────────────────── */
 
-/* Two slow-breathing gradient glows */
+/* Two slow-breathing gradient glows that also drift, so the motion reads. */
 .auth-glow {
-  animation: auth-breathe 14s ease-in-out infinite;
+  animation: auth-breathe 11s ease-in-out infinite;
 }
 .auth-glow-alt {
-  animation: auth-breathe 14s ease-in-out infinite reverse;
-  animation-delay: -7s;
+  animation: auth-breathe-alt 13s ease-in-out infinite;
+  animation-delay: -5s;
 }
 @keyframes auth-breathe {
-  0%, 100% { opacity: 0.35; transform: scale(1); }
-  50%       { opacity: 1;    transform: scale(1.12); }
+  0%, 100% { opacity: 0.55; transform: scale(1) translate(0, 0); }
+  50%      { opacity: 1;    transform: scale(1.18) translate(36px, 22px); }
+}
+@keyframes auth-breathe-alt {
+  0%, 100% { opacity: 0.45; transform: scale(1.1) translate(0, 0); }
+  50%      { opacity: 0.9;  transform: scale(1) translate(-32px, -20px); }
 }
 
 /* Scan line — sweeps top→bottom, on-brand for a web scraper */
 .auth-scanline {
-  height: 1px;
+  height: 2px;
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(34, 114, 255, 0.10) 20%,
-    rgba(34, 114, 255, 0.22) 50%,
-    rgba(34, 114, 255, 0.10) 80%,
+    rgba(34, 114, 255, 0.22) 20%,
+    rgba(34, 114, 255, 0.55) 50%,
+    rgba(34, 114, 255, 0.22) 80%,
     transparent 100%
   );
-  animation: auth-scan 9s linear infinite;
+  box-shadow: 0 0 12px rgba(34, 114, 255, 0.35);
+  animation: auth-scan 7s linear infinite;
 }
 @keyframes auth-scan {
   0%   { transform: translateY(0);     opacity: 0; }
-  4%   { opacity: 1; }
-  96%  { opacity: 0.5; }
+  6%   { opacity: 1; }
+  94%  { opacity: 0.6; }
   100% { transform: translateY(100vh); opacity: 0; }
 }
 
