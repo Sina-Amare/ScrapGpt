@@ -31,7 +31,7 @@ function AuthInput({
   placeholder?: string;
 }) {
   return (
-    <label className="grid gap-1.5 text-sm font-medium text-white/70">
+    <label className="grid gap-1.5 text-sm font-medium text-ink">
       {label}
       <input
         type={type}
@@ -63,7 +63,7 @@ function AuthPasswordField({
 }) {
   const [visible, setVisible] = useState(false);
   return (
-    <label className="grid gap-1.5 text-sm font-medium text-white/70">
+    <label className="grid gap-1.5 text-sm font-medium text-ink">
       {label}
       <div className="relative">
         <input
@@ -79,13 +79,13 @@ function AuthPasswordField({
           type="button"
           tabIndex={-1}
           onClick={() => setVisible((v) => !v)}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-white/45 transition hover:text-white/80"
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted transition hover:text-ink"
           aria-label={visible ? "Hide password" : "Show password"}
         >
           {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
       </div>
-      {hint ? <span className="text-xs font-normal text-white/55">{hint}</span> : null}
+      {hint ? <span className="text-xs font-normal text-muted">{hint}</span> : null}
     </label>
   );
 }
@@ -133,18 +133,21 @@ function AuthFrame({
   const { dark, toggle } = useTheme();
 
   return (
-    <div className="relative min-h-screen overflow-hidden text-white" style={{ background: "#0E0E12" }}>
+    <div className="relative min-h-screen overflow-hidden bg-body text-ink">
 
-      {/* ── Background animations ── */}
+      {/* ── Background: drifting data grid + ambient glows ── */}
 
-      {/* Glow 1 — upper-left */}
+      {/* Data grid — evokes a page being mapped into rows & columns */}
+      <div className="auth-grid pointer-events-none" />
+
+      {/* Glow 1 — upper-left (blue) */}
       <div
         className="auth-glow pointer-events-none absolute"
         style={{
           top: "-12%", left: "-8%",
           width: 680, height: 560,
           borderRadius: "50%",
-          background: "radial-gradient(ellipse, rgba(34,114,255,0.28) 0%, transparent 70%)",
+          background: "radial-gradient(ellipse, rgba(34,114,255,0.22) 0%, transparent 70%)",
         }}
       />
       {/* Glow 2 — lower-right (teal accent) */}
@@ -154,18 +157,15 @@ function AuthFrame({
           bottom: "-18%", right: "-10%",
           width: 560, height: 500,
           borderRadius: "50%",
-          background: "radial-gradient(ellipse, rgba(45,212,191,0.18) 0%, transparent 70%)",
+          background: "radial-gradient(ellipse, rgba(45,212,191,0.16) 0%, transparent 70%)",
         }}
       />
-
-      {/* Scan line — slides top→bottom */}
-      <div className="auth-scanline pointer-events-none absolute inset-x-0 top-0" />
 
       {/* ── Theme toggle — top right ── */}
       <div className="absolute right-5 top-5 z-20">
         <button
           onClick={toggle}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/40 backdrop-blur-sm transition hover:border-white/20 hover:bg-white/[0.09] hover:text-white/70"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-muted transition hover:border-teal hover:text-ink"
           aria-label="Toggle theme"
         >
           <motion.div
@@ -195,15 +195,15 @@ function AuthFrame({
           </div>
 
           <div>
-            <h1 className="text-[2.6rem] font-black leading-[1.1] tracking-tight">
+            <h1 className="text-[2.6rem] font-black leading-[1.1] tracking-tight text-ink">
               Extract structured<br />data from any site.
             </h1>
-            <p className="mt-4 max-w-[280px] text-[0.88rem] leading-relaxed text-white/55">
+            <p className="mt-4 max-w-[280px] text-[0.88rem] leading-relaxed text-muted">
               Connect your LLM, define extraction fields, and pull clean structured data from any page.
             </p>
           </div>
 
-          <ul className="space-y-4 text-sm text-white/60">
+          <ul className="space-y-4 text-sm text-muted">
             {[
               "Bring your own API key — no credits",
               "Self-hosted, your data stays local",
@@ -222,8 +222,7 @@ function AuthFrame({
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-          className="rounded-2xl border p-8"
-          style={{ background: "#18181E", borderColor: "#282832" }}
+          className="rounded-2xl border border-line bg-surface p-8 shadow-panel"
         >
           {/* Mobile-only wordmark */}
           <div className="mb-7 flex items-center gap-2.5 lg:hidden">
@@ -232,8 +231,8 @@ function AuthFrame({
           </div>
 
           <div className="mb-7">
-            <h2 className="text-xl font-bold text-white">{title}</h2>
-            <p className="mt-1 text-sm text-white/55">{subtitle}</p>
+            <h2 className="text-xl font-bold text-ink">{title}</h2>
+            <p className="mt-1 text-sm text-muted">{subtitle}</p>
           </div>
 
           {children}
@@ -299,10 +298,10 @@ export function LoginPage() {
             required
           />
           {authConfig.data?.password_reset_enabled ? (
-            <p className="text-right text-xs text-white/45">
+            <p className="text-right text-xs text-muted">
               <Link
                 to="/forgot-password"
-                className="font-medium text-teal-subtle transition-colors hover:text-white/80"
+                className="font-medium text-teal transition-colors hover:text-teal-dark"
               >
                 Forgot password?
               </Link>
@@ -318,10 +317,10 @@ export function LoginPage() {
           {submitting ? "Signing in…" : "Sign in"}
         </Button>
 
-        <p className="text-center text-sm text-white/55">
+        <p className="text-center text-sm text-muted">
           New here?{" "}
           <Link
-            className="font-semibold text-teal-subtle transition-colors hover:text-white/80"
+            className="font-semibold text-teal transition-colors hover:text-teal-dark"
             to="/register"
           >
             Create an account
@@ -403,10 +402,10 @@ export function RegisterPage() {
           {submitting ? "Creating…" : "Create account"}
         </Button>
 
-        <p className="text-center text-sm text-white/55">
+        <p className="text-center text-sm text-muted">
           Already have access?{" "}
           <Link
-            className="font-semibold text-teal-subtle transition-colors hover:text-white/80"
+            className="font-semibold text-teal transition-colors hover:text-teal-dark"
             to="/login"
           >
             Sign in
@@ -423,10 +422,10 @@ export function RegisterPage() {
 
 function BackToLogin() {
   return (
-    <p className="text-center text-sm text-white/55">
+    <p className="text-center text-sm text-muted">
       Remembered it?{" "}
       <Link
-        className="font-semibold text-teal-subtle transition-colors hover:text-white/80"
+        className="font-semibold text-teal transition-colors hover:text-teal-dark"
         to="/login"
       >
         Back to sign in
@@ -537,7 +536,7 @@ export function ForgotPasswordPage() {
               setError(null);
               setNotice(null);
             }}
-            className="text-center text-xs text-white/45 transition hover:text-white/80"
+            className="text-center text-xs text-muted transition hover:text-ink"
           >
             Didn't get a code? Start over
           </button>

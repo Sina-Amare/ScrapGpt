@@ -133,31 +133,32 @@ select option {
   transition: background-color 9999s ease !important;
 }
 
-/* ─── Autofill override: auth inputs (always dark) ───────────────────────── */
+/* ─── Autofill override: auth inputs (theme-aware) ───────────────────────── */
 .auth-input:-webkit-autofill,
 .auth-input:-webkit-autofill:hover,
 .auth-input:-webkit-autofill:focus {
-  -webkit-box-shadow: 0 0 0 1000px #18181E inset !important;
-  -webkit-text-fill-color: rgba(255, 255, 255, 0.85) !important;
-  caret-color: #fff;
+  -webkit-box-shadow: 0 0 0 1000px var(--c-porcelain) inset !important;
+  -webkit-text-fill-color: var(--c-ink) !important;
+  caret-color: var(--c-ink);
   transition: background-color 9999s ease !important;
 }
 
-/* ─── Auth input (dark) ───────────────────────────────────────────────────── */
+/* ─── Auth input (follows the active theme) ──────────────────────────────── */
 .auth-input {
   height: 2.75rem;
   width: 100%;
   border-radius: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--c-line);
+  background: var(--c-porcelain);
   padding: 0 0.875rem;
   font-size: 0.875rem;
-  color: #fff;
+  color: var(--c-ink);
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s !important;
 }
 .auth-input::placeholder {
-  color: rgba(255, 255, 255, 0.22);
+  color: var(--c-muted);
+  opacity: 0.6;
 }
 .auth-input:focus {
   border-color: rgba(34, 114, 255, 0.7);
@@ -187,46 +188,43 @@ select option {
 
 /* ─── Auth page background animations ────────────────────────────────────── */
 
-/* Two slow-breathing gradient glows that also drift, so the motion reads. */
+/* Ambient gradient glows — gentle breathing for depth (no harsh drift). */
 .auth-glow {
-  animation: auth-breathe 11s ease-in-out infinite;
+  animation: auth-breathe 12s ease-in-out infinite;
 }
 .auth-glow-alt {
-  animation: auth-breathe-alt 13s ease-in-out infinite;
-  animation-delay: -5s;
+  animation: auth-breathe-alt 15s ease-in-out infinite;
+  animation-delay: -6s;
 }
 @keyframes auth-breathe {
-  0%, 100% { opacity: 0.55; transform: scale(1) translate(0, 0); }
-  50%      { opacity: 1;    transform: scale(1.18) translate(36px, 22px); }
+  0%, 100% { opacity: 0.5;  transform: scale(1); }
+  50%      { opacity: 0.85; transform: scale(1.12); }
 }
 @keyframes auth-breathe-alt {
-  0%, 100% { opacity: 0.45; transform: scale(1.1) translate(0, 0); }
-  50%      { opacity: 0.9;  transform: scale(1) translate(-32px, -20px); }
+  0%, 100% { opacity: 0.4;  transform: scale(1.08); }
+  50%      { opacity: 0.75; transform: scale(1); }
 }
 
-/* Scan line — sweeps top→bottom, on-brand for a web scraper */
-.auth-scanline {
-  height: 2px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(34, 114, 255, 0.22) 20%,
-    rgba(34, 114, 255, 0.55) 50%,
-    rgba(34, 114, 255, 0.22) 80%,
-    transparent 100%
-  );
-  box-shadow: 0 0 12px rgba(34, 114, 255, 0.35);
-  animation: auth-scan 7s linear infinite;
+/* Drifting data grid — evokes a page being mapped into rows and columns.
+   Masked so it fades toward the edges instead of tiling the whole screen. */
+.auth-grid {
+  position: absolute;
+  inset: -42px;
+  background-image:
+    linear-gradient(to right, rgba(34, 114, 255, 0.10) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(34, 114, 255, 0.10) 1px, transparent 1px);
+  background-size: 42px 42px;
+  -webkit-mask-image: radial-gradient(ellipse 75% 60% at 50% 42%, #000 25%, transparent 78%);
+  mask-image: radial-gradient(ellipse 75% 60% at 50% 42%, #000 25%, transparent 78%);
+  animation: auth-grid-pan 22s linear infinite;
 }
-@keyframes auth-scan {
-  0%   { transform: translateY(0);     opacity: 0; }
-  6%   { opacity: 1; }
-  94%  { opacity: 0.6; }
-  100% { transform: translateY(100vh); opacity: 0; }
+@keyframes auth-grid-pan {
+  0%   { background-position: 0 0, 0 0; }
+  100% { background-position: 42px 42px, 42px 42px; }
 }
 
 /* ─── Respect the user's reduced-motion preference ───────────────────────── */
-/* Neutralizes the ambient animations (grid drift, auth glows, scan line,
+/* Neutralizes the ambient animations (grid drift, auth glows, data grid,
    button shimmer, page transitions) for users who opt out of motion. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -238,8 +236,6 @@ select option {
   body { animation: none !important; }
   .auth-glow,
   .auth-glow-alt,
-  .auth-scanline,
+  .auth-grid,
   .btn-primary-shimmer::after { animation: none !important; }
-  /* Keep the scan line invisible rather than frozen mid-sweep. */
-  .auth-scanline { opacity: 0 !important; }
 }
