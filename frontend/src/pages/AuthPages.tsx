@@ -5,7 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Alert } from "../components/ui/Alert";
 import { Button } from "../components/ui/Button";
 import { useAuth } from "../lib/auth";
-import { useTheme } from "../lib/useTheme";
+import { useTheme } from "../lib/theme";
 
 // ---------------------------------------------------------------------------
 // Inputs
@@ -29,7 +29,7 @@ function AuthInput({
   placeholder?: string;
 }) {
   return (
-    <label className="grid gap-1.5 text-sm font-medium text-white/50">
+    <label className="grid gap-1.5 text-sm font-medium text-white/70">
       {label}
       <input
         type={type}
@@ -61,7 +61,7 @@ function AuthPasswordField({
 }) {
   const [visible, setVisible] = useState(false);
   return (
-    <label className="grid gap-1.5 text-sm font-medium text-white/50">
+    <label className="grid gap-1.5 text-sm font-medium text-white/70">
       {label}
       <div className="relative">
         <input
@@ -77,13 +77,13 @@ function AuthPasswordField({
           type="button"
           tabIndex={-1}
           onClick={() => setVisible((v) => !v)}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-white/25 transition hover:text-white/60"
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-white/45 transition hover:text-white/80"
           aria-label={visible ? "Hide password" : "Show password"}
         >
           {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
       </div>
-      {hint ? <span className="text-xs font-normal text-white/28">{hint}</span> : null}
+      {hint ? <span className="text-xs font-normal text-white/55">{hint}</span> : null}
     </label>
   );
 }
@@ -196,12 +196,12 @@ function AuthFrame({
             <h1 className="text-[2.6rem] font-black leading-[1.1] tracking-tight">
               Extract structured<br />data from any site.
             </h1>
-            <p className="mt-4 max-w-[280px] text-[0.88rem] leading-relaxed text-white/35">
+            <p className="mt-4 max-w-[280px] text-[0.88rem] leading-relaxed text-white/55">
               Connect your LLM, define extraction fields, and pull clean structured data from any page.
             </p>
           </div>
 
-          <ul className="space-y-4 text-sm text-white/38">
+          <ul className="space-y-4 text-sm text-white/60">
             {[
               "Bring your own API key — no credits",
               "Self-hosted, your data stays local",
@@ -231,7 +231,7 @@ function AuthFrame({
 
           <div className="mb-7">
             <h2 className="text-xl font-bold text-white">{title}</h2>
-            <p className="mt-1 text-sm text-white/35">{subtitle}</p>
+            <p className="mt-1 text-sm text-white/55">{subtitle}</p>
           </div>
 
           {children}
@@ -304,7 +304,7 @@ export function LoginPage() {
           {submitting ? "Signing in…" : "Sign in"}
         </Button>
 
-        <p className="text-center text-sm text-white/28">
+        <p className="text-center text-sm text-white/55">
           New here?{" "}
           <Link
             className="font-semibold text-teal-subtle transition-colors hover:text-white/80"
@@ -389,7 +389,7 @@ export function RegisterPage() {
           {submitting ? "Creating…" : "Create account"}
         </Button>
 
-        <p className="text-center text-sm text-white/28">
+        <p className="text-center text-sm text-white/55">
           Already have access?{" "}
           <Link
             className="font-semibold text-teal-subtle transition-colors hover:text-white/80"

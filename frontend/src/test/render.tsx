@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactElement } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { render } from "@testing-library/react";
+import { ThemeProvider } from "../lib/theme";
 
 export function renderWithProviders(ui: ReactElement, initialEntries = ["/"]) {
   const queryClient = new QueryClient({
@@ -13,7 +14,9 @@ export function renderWithProviders(ui: ReactElement, initialEntries = ["/"]) {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
+      <ThemeProvider>
+        <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }

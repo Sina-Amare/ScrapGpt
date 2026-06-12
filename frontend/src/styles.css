@@ -219,3 +219,22 @@ select option {
   96%  { opacity: 0.5; }
   100% { transform: translateY(100vh); opacity: 0; }
 }
+
+/* ─── Respect the user's reduced-motion preference ───────────────────────── */
+/* Neutralizes the ambient animations (grid drift, auth glows, scan line,
+   button shimmer, page transitions) for users who opt out of motion. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  body { animation: none !important; }
+  .auth-glow,
+  .auth-glow-alt,
+  .auth-scanline,
+  .btn-primary-shimmer::after { animation: none !important; }
+  /* Keep the scan line invisible rather than frozen mid-sweep. */
+  .auth-scanline { opacity: 0 !important; }
+}

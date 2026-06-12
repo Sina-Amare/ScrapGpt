@@ -21,7 +21,7 @@ import { NavLink, useLocation } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { useTheme } from "../lib/useTheme";
+import { useTheme } from "../lib/theme";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: Activity, end: true },
