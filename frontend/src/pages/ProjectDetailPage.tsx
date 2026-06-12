@@ -402,6 +402,20 @@ export function ProjectDetailPage() {
     },
   });
 
+  // Start a sibling project for the same URL in the other extraction mode, so a
+  // page with both kinds of data doesn't force the user to choose one.
+  const siblingMutation = useMutation({
+    mutationFn: (vars: { url: string; mode: "STRUCTURED" | "CONTENT" }) =>
+      api.analyzeProject({ url: vars.url, advanced: { extraction_mode: vars.mode } }),
+    onSuccess: (created) => {
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast.success("Started a separate project for the other data type");
+      navigate(`/projects/${created.id}`);
+    },
+    onError: (err) =>
+      toast.error(err instanceof Error ? err.message : "Could not start the sibling project")
+  });
+
   const setSessionMutation = useMutation({
     mutationFn: (sessionId: number | null) =>
       api.setProjectSession(projectId, sessionId),
@@ -551,6 +565,39 @@ export function ProjectDetailPage() {
                 <ConfidenceBar value={project.confidence} />
               </div>
             </div>
+            {(() => {
+              const raw = project.fetch_metadata?.alternate_mode_suggestion;
+              const altMode =
+                raw === "CONTENT" ? "CONTENT" : raw === "STRUCTURED" ? "STRUCTURED" : null;
+              if (!altMode) return null;
+              return (
+                <div className="mt-5">
+                  <Alert tone="info">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <span>
+                        This page also looks like it has{" "}
+                        <strong>
+                          {altMode === "CONTENT"
+                            ? "article / document content"
+                            : "structured, table-like data"}
+                        </strong>
+                        . Extract that too — it starts a separate project, so you keep this one.
+                      </span>
+                      <Button
+                        variant="secondary"
+                        className="shrink-0"
+                        onClick={() => siblingMutation.mutate({ url: project.url, mode: altMode })}
+                        disabled={siblingMutation.isPending}
+                      >
+                        {siblingMutation.isPending
+                          ? "Starting…"
+                          : `Also extract as ${altMode === "CONTENT" ? "Content" : "Structured"}`}
+                      </Button>
+                    </div>
+                  </Alert>
+                </div>
+              );
+            })()}
             {project.error ? (
               <div className="mt-5 flex flex-col gap-2">
                 <Alert tone="danger">

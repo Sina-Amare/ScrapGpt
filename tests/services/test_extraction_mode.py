@@ -3,6 +3,7 @@
 import pytest
 
 from app.services.extraction_mode import (
+    detect_alternate_mode,
     infer_extraction_mode_from_url,
     resolve_extraction_mode,
 )
@@ -50,3 +51,25 @@ def test_resolve_falls_back_to_heuristic_when_unspecified() -> None:
     assert resolve_extraction_mode("https://github.com/owner/repo", None) == "CONTENT"
     assert resolve_extraction_mode("https://shop.example.com/products", None) == "STRUCTURED"
     assert resolve_extraction_mode("https://shop.example.com/products", "") == "STRUCTURED"
+
+
+def test_detect_alternate_suggests_content_for_structured_with_prose() -> None:
+    prose = "word " * 300  # ~1500 chars of paragraph text
+    html = f"<html><body><table><tr><td>a</td></tr><tr><td>b</td></tr><tr><td>c</td></tr></table><p>{prose}</p></body></html>"
+    assert detect_alternate_mode(html, "STRUCTURED") == "CONTENT"
+
+
+def test_detect_alternate_suggests_structured_for_content_with_table() -> None:
+    html = "<html><body><article><p>short</p></article><table><tr><td>1</td></tr><tr><td>2</td></tr><tr><td>3</td></tr></table></body></html>"
+    assert detect_alternate_mode(html, "CONTENT") == "STRUCTURED"
+
+
+def test_detect_alternate_none_when_only_current_kind_present() -> None:
+    cards = "".join('<div class="card">item</div>' for _ in range(20))
+    html = f"<html><body>{cards}</body></html>"
+    # Structured project on a card grid with no prose -> nothing else to suggest.
+    assert detect_alternate_mode(html, "STRUCTURED") is None
+
+
+def test_detect_alternate_handles_empty_html() -> None:
+    assert detect_alternate_mode("", "STRUCTURED") is None

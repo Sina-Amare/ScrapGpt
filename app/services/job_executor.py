@@ -22,6 +22,7 @@ from app.services.job_state import (
     transition_job_to_awaiting_setup,
     transition_job_to_failed,
 )
+from app.services.extraction_mode import detect_alternate_mode
 from app.services.project_events import record_project_event
 from app.services.url_validator import URLValidationError, validate_url
 from app.services.provider_service import ProviderCallError, ProviderJSONError
@@ -132,6 +133,11 @@ async def execute_job_pipeline(job_id: int, provider_config_id: int) -> None:
             **fetch_result.fetch_metadata,
             "final_url": fetch_result.final_url,
             "render_mode_used": fetch_result.render_mode_used.value,
+            # If the page also has the other kind of data, suggest a sibling
+            # project so the user doesn't have to choose one and lose the other.
+            "alternate_mode_suggestion": detect_alternate_mode(
+                fetch_result.html, extraction_mode.value
+            ),
         }
 
         # ---- Phase 7: Choose final state ----

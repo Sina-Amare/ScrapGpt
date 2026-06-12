@@ -15,7 +15,10 @@ other mode. It does not call the network or the LLM.
 
 from __future__ import annotations
 
+from collections import Counter
 from urllib.parse import urlsplit
+
+from bs4 import BeautifulSoup
 
 # Hosts whose pages are almost always prose/document content rather than
 # row-like records. Matched on the exact host or any subdomain of it.
@@ -81,3 +84,42 @@ def resolve_extraction_mode(url: str, explicit: str | None) -> str:
     if explicit:
         return explicit
     return infer_extraction_mode_from_url(url)
+
+
+def detect_alternate_mode(html: str, current_mode: str) -> str | None:
+    """Heuristically detect whether the *other* extraction mode also has data.
+
+    Returns the suggested alternate mode ("STRUCTURED" / "CONTENT") when the
+    page meaningfully contains the other kind of data, else None. Used to offer
+    the user a one-click sibling project for the same URL so they don't have to
+    choose and lose one. Conservative by design — a suggestion, not a verdict.
+    """
+    if not html:
+        return None
+    try:
+        soup = BeautifulSoup(html, "lxml")
+    except Exception:
+        return None
+
+    # Structured signal: a real data table, or a large repeated container set
+    # (a listing/grid sharing one class many times).
+    class_counts: Counter[str] = Counter()
+    for element in soup.find_all(["div", "li", "article", "section"]):
+        for css_class in element.get("class") or []:
+            class_counts[css_class] += 1
+    max_repeat = max(class_counts.values(), default=0)
+    big_tables = sum(1 for t in soup.find_all("table") if len(t.find_all("tr")) >= 3)
+    has_structured = big_tables >= 1 or max_repeat >= 12
+
+    # Content signal: substantial prose (paragraph text) or an <article>.
+    paragraph_text = sum(
+        len(p.get_text(" ", strip=True)) for p in soup.find_all("p")
+    )
+    has_content = paragraph_text >= 1200 or bool(soup.find("article"))
+
+    mode = (current_mode or "").upper()
+    if mode == "STRUCTURED" and has_content:
+        return "CONTENT"
+    if mode == "CONTENT" and has_structured:
+        return "STRUCTURED"
+    return None
