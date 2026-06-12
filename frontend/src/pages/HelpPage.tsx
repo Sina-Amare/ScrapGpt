@@ -44,8 +44,8 @@ function Pipeline() {
           <span
             className={`rounded-md px-3 py-1.5 text-xs font-bold text-white ${
               step.current
-                ? "bg-teal ring-2 ring-teal/40 ring-offset-1 ring-offset-surface"
-                : "bg-teal/70"
+                ? "bg-teal ring-2 ring-teal/60 ring-offset-2 ring-offset-surface"
+                : "bg-teal-dark"
             }`}
           >
             {step.n}. {step.label}
