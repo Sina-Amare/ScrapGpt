@@ -9,6 +9,18 @@ import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
 
+// Fixed positions/timing for the floating "data node" dots in the auth bg.
+const AUTH_NODES = [
+  { left: "12%", top: "24%", delay: "0s", dur: "13s" },
+  { left: "26%", top: "68%", delay: "2.4s", dur: "16s" },
+  { left: "40%", top: "16%", delay: "5s", dur: "12s" },
+  { left: "33%", top: "82%", delay: "1.2s", dur: "15s" },
+  { left: "53%", top: "58%", delay: "3.6s", dur: "14s" },
+  { left: "8%", top: "52%", delay: "6.2s", dur: "17s" },
+  { left: "62%", top: "30%", delay: "4.4s", dur: "13s" },
+  { left: "18%", top: "88%", delay: "0.8s", dur: "15s" }
+];
+
 // ---------------------------------------------------------------------------
 // Inputs
 // ---------------------------------------------------------------------------
@@ -135,31 +147,33 @@ function AuthFrame({
   return (
     <div className="relative min-h-screen overflow-hidden bg-body text-ink">
 
-      {/* ── Background: drifting data grid + ambient glows ── */}
+      {/* ── Background: aurora + data grid + floating data nodes ── */}
+
+      {/* Aurora — slow-drifting blurred color blobs (gradient-mesh feel) */}
+      <div className="auth-aurora pointer-events-none" aria-hidden="true">
+        <span className="auth-blob auth-blob-1" />
+        <span className="auth-blob auth-blob-2" />
+        <span className="auth-blob auth-blob-3" />
+      </div>
 
       {/* Data grid — evokes a page being mapped into rows & columns */}
-      <div className="auth-grid pointer-events-none" />
+      <div className="auth-grid pointer-events-none" aria-hidden="true" />
 
-      {/* Glow 1 — upper-left (blue) */}
-      <div
-        className="auth-glow pointer-events-none absolute"
-        style={{
-          top: "-12%", left: "-8%",
-          width: 680, height: 560,
-          borderRadius: "50%",
-          background: "radial-gradient(ellipse, rgba(34,114,255,0.22) 0%, transparent 70%)",
-        }}
-      />
-      {/* Glow 2 — lower-right (teal accent) */}
-      <div
-        className="auth-glow-alt pointer-events-none absolute"
-        style={{
-          bottom: "-18%", right: "-10%",
-          width: 560, height: 500,
-          borderRadius: "50%",
-          background: "radial-gradient(ellipse, rgba(45,212,191,0.16) 0%, transparent 70%)",
-        }}
-      />
+      {/* Floating data nodes — points being gathered */}
+      <div className="auth-nodes pointer-events-none" aria-hidden="true">
+        {AUTH_NODES.map((node, i) => (
+          <span
+            key={i}
+            className="auth-node"
+            style={{
+              left: node.left,
+              top: node.top,
+              animationDelay: node.delay,
+              animationDuration: node.dur,
+            }}
+          />
+        ))}
+      </div>
 
       {/* ── Theme toggle — top right ── */}
       <div className="absolute right-5 top-5 z-20">

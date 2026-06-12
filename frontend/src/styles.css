@@ -188,21 +188,74 @@ select option {
 
 /* ─── Auth page background animations ────────────────────────────────────── */
 
-/* Ambient gradient glows — gentle breathing for depth (no harsh drift). */
-.auth-glow {
-  animation: auth-breathe 12s ease-in-out infinite;
+/* Aurora — slow-drifting blurred color blobs for a premium gradient-mesh look.
+   Works on both themes; the opaque form card sits on top, so it stays readable. */
+.auth-aurora {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
 }
-.auth-glow-alt {
-  animation: auth-breathe-alt 15s ease-in-out infinite;
-  animation-delay: -6s;
+.auth-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(72px);
+  opacity: 0.5;
+  will-change: transform;
 }
-@keyframes auth-breathe {
-  0%, 100% { opacity: 0.5;  transform: scale(1); }
-  50%      { opacity: 0.85; transform: scale(1.12); }
+html:not(.dark) .auth-blob {
+  opacity: 0.42;
 }
-@keyframes auth-breathe-alt {
-  0%, 100% { opacity: 0.4;  transform: scale(1.08); }
-  50%      { opacity: 0.75; transform: scale(1); }
+.auth-blob-1 {
+  width: 540px; height: 540px; left: -8%; top: -14%;
+  background: radial-gradient(circle, rgba(34, 114, 255, 0.55), transparent 70%);
+  animation: auth-drift-1 26s ease-in-out infinite;
+}
+.auth-blob-2 {
+  width: 480px; height: 480px; right: -8%; bottom: -16%;
+  background: radial-gradient(circle, rgba(45, 212, 191, 0.42), transparent 70%);
+  animation: auth-drift-2 32s ease-in-out infinite;
+}
+.auth-blob-3 {
+  width: 440px; height: 440px; left: 42%; top: 26%;
+  background: radial-gradient(circle, rgba(124, 92, 255, 0.34), transparent 70%);
+  animation: auth-drift-3 38s ease-in-out infinite;
+}
+@keyframes auth-drift-1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50%      { transform: translate(70px, 48px) scale(1.16); }
+}
+@keyframes auth-drift-2 {
+  0%, 100% { transform: translate(0, 0) scale(1.1); }
+  50%      { transform: translate(-56px, -36px) scale(1); }
+}
+@keyframes auth-drift-3 {
+  0%, 100% { transform: translate(-30px, 0) scale(1); opacity: 0.22; }
+  50%      { transform: translate(44px, -34px) scale(1.22); opacity: 0.4; }
+}
+
+/* Floating data nodes — small glowing points drifting upward (position &
+   timing set per-node inline). */
+.auth-nodes {
+  position: absolute;
+  inset: 0;
+}
+.auth-node {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 9999px;
+  background: rgba(34, 114, 255, 0.9);
+  box-shadow: 0 0 8px 1px rgba(34, 114, 255, 0.55);
+  opacity: 0;
+  animation-name: auth-float;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+@keyframes auth-float {
+  0%   { transform: translateY(14px); opacity: 0; }
+  15%  { opacity: 0.85; }
+  85%  { opacity: 0.6; }
+  100% { transform: translateY(-46px); opacity: 0; }
 }
 
 /* Drifting data grid — evokes a page being mapped into rows and columns.
@@ -234,8 +287,10 @@ select option {
     scroll-behavior: auto !important;
   }
   body { animation: none !important; }
-  .auth-glow,
-  .auth-glow-alt,
+  .auth-blob,
+  .auth-node,
   .auth-grid,
   .btn-primary-shimmer::after { animation: none !important; }
+  /* Hide the floating nodes entirely rather than freezing them at opacity 0. */
+  .auth-node { display: none !important; }
 }
