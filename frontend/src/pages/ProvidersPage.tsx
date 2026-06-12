@@ -589,10 +589,13 @@ export function ProvidersPage() {
                   </div>
                 </td>
                 <td className="px-4 py-4">
-                  <div className="flex flex-wrap gap-2">
+                  {/* Actions: wrap on mobile, single no-wrap row on desktop. The
+                      Test button keeps a fixed width so the "Testing…" busy state
+                      never shifts or wraps the sibling buttons. */}
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-nowrap sm:items-center sm:justify-end">
                     <Button
                       variant="secondary"
-                      className="h-9 px-3"
+                      className="h-9 px-3 sm:min-w-[7rem] sm:justify-center"
                       onClick={() => test.mutate(provider.id)}
                       loading={testingId === provider.id}
                       disabled={test.isPending}
