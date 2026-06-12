@@ -650,7 +650,11 @@ export function ProjectDetailPage() {
                     </li>
                   ))}
                 </ul>
-                <p className="mt-2 text-xs text-muted">Use Retry above to reopen the project, then start extraction again.</p>
+                <p className="mt-2 text-xs text-muted">
+                  {project.system_state === "FAILED"
+                    ? "Use Retry above to reopen the project, then start extraction again."
+                    : "These pages were skipped, but extraction completed with partial results."}
+                </p>
               </details>
             )}
             {project.warnings.length ? (
