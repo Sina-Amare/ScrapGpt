@@ -4,6 +4,19 @@ import { Children, isValidElement, SelectHTMLAttributes, useEffect, useRef, useS
 
 type OptionItem = { value: string; label: string; disabled?: boolean };
 
+// Flatten an option's children into plain text. Using String() directly would
+// comma-join array children (e.g. `{name} ({provider} / {model})` becomes
+// "name, (,provider, / ,model,)"), so concatenate recursively instead.
+function nodeToText(node: React.ReactNode): string {
+  if (node === null || node === undefined || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(nodeToText).join("");
+  if (isValidElement(node)) {
+    return nodeToText((node.props as { children?: React.ReactNode }).children);
+  }
+  return "";
+}
+
 function parseOptions(children: React.ReactNode): OptionItem[] {
   const items: OptionItem[] = [];
   Children.forEach(children, (child) => {
@@ -11,7 +24,7 @@ function parseOptions(children: React.ReactNode): OptionItem[] {
     const props = child.props as { value?: string | number; children?: React.ReactNode; disabled?: boolean };
     items.push({
       value: String(props.value ?? ""),
-      label: String(props.children ?? ""),
+      label: nodeToText(props.children),
       disabled: props.disabled,
     });
   });
@@ -90,7 +103,10 @@ export function Select({ value = "", onChange, disabled, className = "", childre
           disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
         ].join(" ")}
       >
-        <span className={`truncate ${!selected?.label ? "text-muted" : ""}`}>
+        <span
+          className={`min-w-0 flex-1 truncate text-left ${!selected?.label ? "text-muted" : ""}`}
+          title={selected?.label || undefined}
+        >
           {selected?.label ?? <span className="text-muted">—</span>}
         </span>
         <motion.span
@@ -121,9 +137,16 @@ export function Select({ value = "", onChange, disabled, className = "", childre
                   role="option"
                   aria-selected={isSelected}
                   aria-disabled={opt.disabled}
-                  onClick={() => !opt.disabled && pick(opt.value)}
+                  title={opt.label}
+                  // Select on mousedown (not click) and preventDefault so the
+                  // choice registers immediately, instead of needing a second
+                  // click after the trigger blurs.
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    if (!opt.disabled) pick(opt.value);
+                  }}
                   className={[
-                    "flex cursor-pointer items-center px-3 py-2 text-sm transition select-none",
+                    "block cursor-pointer truncate px-3 py-2 text-sm transition select-none",
                     opt.disabled
                       ? "cursor-not-allowed text-muted/40"
                       : isSelected
