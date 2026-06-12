@@ -50,6 +50,7 @@ from app.schemas.project import (
     FrontierUrlDecision,
     PreviewResponse,
     ProjectAnalyzeRequest,
+    ProjectEventResponse,
     ProjectListItem,
     ProjectResponse,
     RecordPageResponse,
@@ -57,6 +58,7 @@ from app.schemas.project import (
 )
 from app.services.crawl_scope import ScopeConfirmationError
 from app.services.extraction_mode import resolve_extraction_mode
+from app.services.project_events import list_project_events, record_project_event
 from app.services.extraction_spec_service import ensure_default_spec, latest_spec, selected_field_count
 from app.services.frontierpreview import create_frontier_preview, latest_frontier_preview
 from app.services.job_admission import JobAdmissionError, JobAdmissionErrorType, admit_job
@@ -811,7 +813,28 @@ async def cancel_project(
     result = await transition_job_to_canceled(project_id, expected_states=ACTIVE_PROJECT_STATES)
     if not result.success or not result.job:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=result.error or "Cancellation failed")
+    await record_project_event(
+        project_id, user.id, "project.canceled", level="warning",
+        message="Project canceled by user.",
+    )
     return await _project_response(db, result.job)
+
+
+@router.get(
+    "/{project_id}/events",
+    response_model=list[ProjectEventResponse],
+    summary="Project activity log",
+)
+async def project_events(
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[ProjectEventResponse]:
+    # Owner-checked; 404 on mismatch (do not reveal existence).
+    await _owned_project(db, user, project_id)
+    events = await list_project_events(db, project_id, user.id, limit=limit)
+    return [ProjectEventResponse.from_event(event) for event in events]
 
 
 @router.post("/{project_id}/retry", response_model=ProjectResponse, summary="Retry a failed project")
@@ -830,6 +853,10 @@ async def retry_project(
             detail={"message": str(exc), "error_code": exc.error_code},
         ) from exc
     await db.commit()
+    await record_project_event(
+        project.id, user.id, "project.retried",
+        message="Project retry requested by user.",
+    )
     if provider is not None:
         background_tasks.add_task(
             execute_job_pipeline,

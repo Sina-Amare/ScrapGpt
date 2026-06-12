@@ -11,6 +11,32 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 from app.schemas.job import ContentAnalysis, StructuredAnalysis
 
 
+class ProjectEventResponse(BaseModel):
+    """One row of the user-facing project activity log."""
+
+    id: int
+    project_id: int
+    event_type: str
+    level: str
+    message: str
+    metadata: dict[str, Any]
+    created_at: datetime
+
+    @classmethod
+    def from_event(cls, event: Any) -> "ProjectEventResponse":
+        # The model attribute is ``event_metadata`` (column "metadata"); the API
+        # field is ``metadata``.
+        return cls(
+            id=event.id,
+            project_id=event.project_id,
+            event_type=event.event_type,
+            level=event.level,
+            message=event.message,
+            metadata=event.event_metadata or {},
+            created_at=event.created_at,
+        )
+
+
 class ProjectAdvancedOptions(BaseModel):
     extraction_mode: str | None = None
     workflow_mode: str | None = None

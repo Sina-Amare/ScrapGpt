@@ -22,6 +22,7 @@ from app.services.job_state import (
     transition_job_to_awaiting_setup,
     transition_job_to_failed,
 )
+from app.services.project_events import record_project_event
 from app.services.url_validator import URLValidationError, validate_url
 from app.services.provider_service import ProviderCallError, ProviderJSONError
 
@@ -37,6 +38,7 @@ async def execute_job_pipeline(job_id: int, provider_config_id: int) -> None:
     """
     logger.info("job_pipeline.started", extra={"job_id": job_id})
 
+    user_id: int | None = None
     try:
         async with async_session_factory() as db:
             job = await db.get(Job, job_id)
@@ -47,6 +49,7 @@ async def execute_job_pipeline(job_id: int, provider_config_id: int) -> None:
             extraction_mode = job.extraction_mode
             workflow_mode = job.workflow_mode
             render_mode = job.render_mode.value
+            user_id = job.user_id
 
             provider_config = await db.get(ProviderConfig, provider_config_id)
             if not provider_config:
@@ -54,6 +57,11 @@ async def execute_job_pipeline(job_id: int, provider_config_id: int) -> None:
                     job_id,
                     "Provider config not found",
                     "NO_PROVIDER_CONFIGURED",
+                )
+                await record_project_event(
+                    job_id, user_id, "analysis.failed", level="error",
+                    message="Analysis failed: no provider configured.",
+                    metadata={"error_code": "NO_PROVIDER_CONFIGURED"},
                 )
                 return
 
@@ -65,12 +73,20 @@ async def execute_job_pipeline(job_id: int, provider_config_id: int) -> None:
                 extra={"job_id": job_id, "error": result.error},
             )
             return
+        await record_project_event(
+            job_id, user_id, "analysis.started", message="Analysis started."
+        )
 
         # ---- Phase 2: Validate URL ----
         try:
             validated_url = validate_url(url)
         except URLValidationError as exc:
             await transition_job_to_failed(job_id, str(exc), exc.reason.value)
+            await record_project_event(
+                job_id, user_id, "analysis.failed", level="error",
+                message="Analysis failed: the URL could not be fetched safely.",
+                metadata={"error_code": exc.reason.value},
+            )
             return
 
         # ---- Phase 3: Fetch page ----
@@ -78,6 +94,11 @@ async def execute_job_pipeline(job_id: int, provider_config_id: int) -> None:
             fetch_result = await fetch_url(validated_url, render_mode)
         except FetchError as exc:
             await transition_job_to_failed(job_id, str(exc), exc.error_code)
+            await record_project_event(
+                job_id, user_id, "analysis.failed", level="error",
+                message="Analysis failed: the page could not be fetched.",
+                metadata={"error_code": exc.error_code},
+            )
             return
 
         # ---- Phase 5: Build DOM summary ----
@@ -94,6 +115,11 @@ async def execute_job_pipeline(job_id: int, provider_config_id: int) -> None:
             )
         except (ProviderCallError, ProviderJSONError) as exc:
             await transition_job_to_failed(job_id, str(exc), "ANALYSIS_FAILED")
+            await record_project_event(
+                job_id, user_id, "analysis.failed", level="error",
+                message="Analysis failed: the AI provider call did not succeed.",
+                metadata={"error_code": "ANALYSIS_FAILED"},
+            )
             return
 
         # ---- Phase 6b: Validate selectors against actual HTML ----
@@ -128,14 +154,33 @@ async def execute_job_pipeline(job_id: int, provider_config_id: int) -> None:
                 extra={"job_id": job_id, "error": res.error},
             )
 
+        final_state = res.job.state.value if res.job else "unknown"
         logger.info(
             "job_pipeline.completed",
-            extra={"job_id": job_id, "final_state": res.job.state.value if res.job else "unknown"},
+            extra={"job_id": job_id, "final_state": final_state},
         )
+        if res.success:
+            await record_project_event(
+                job_id,
+                user_id,
+                "analysis.ready",
+                message=(
+                    "Analysis ready — review and configure fields."
+                    if final_state == "AWAITING_SETUP"
+                    else "Analysis complete."
+                ),
+                metadata={"state": final_state, "confidence": confidence},
+            )
 
     except Exception as exc:
         logger.exception("job_pipeline.unexpected_error", extra={"job_id": job_id, "error": str(exc)})
         try:
             await transition_job_to_failed(job_id, f"Unexpected error: {exc}", "ANALYSIS_FAILED")
+            if user_id is not None:
+                await record_project_event(
+                    job_id, user_id, "analysis.failed", level="error",
+                    message="Analysis failed unexpectedly.",
+                    metadata={"error_code": "ANALYSIS_FAILED"},
+                )
         except Exception:
             logger.exception("job_pipeline.failed_to_mark_failed", extra={"job_id": job_id})

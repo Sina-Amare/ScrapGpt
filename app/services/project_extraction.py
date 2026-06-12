@@ -37,6 +37,7 @@ from app.services.crawl_scope import (
 )
 from app.services.extractor import extract_records_from_html
 from app.services.fetcher import FetchError, fetch_url
+from app.services.project_events import record_project_event
 from app.services.url_normalizer import discover_same_site_links, normalize_url
 from app.services.url_validator import URLValidationError, validate_url
 from app.services.extraction_quality import compute_extraction_quality
@@ -218,6 +219,14 @@ async def _mark_project_failed(
     project.error = message
     project.error_code = code
     await db.commit()
+    await record_project_event(
+        project.id,
+        project.user_id,
+        "extraction.failed",
+        level="error",
+        message=message,
+        metadata={"error_code": code},
+    )
 
 
 async def execute_project_extraction(project_id: int, spec_id: int) -> None:
@@ -267,6 +276,12 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
             if project.state == ProjectState.DISCOVERING:
                 project.transition_to(ProjectState.EXTRACTING)
                 await db.commit()
+                await record_project_event(
+                    project_id,
+                    project.user_id,
+                    "extraction.started",
+                    message="Extraction started.",
+                )
 
             processed_pages = 0
             total_records = 0
@@ -596,6 +611,20 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
             )
             project.transition_to(ProjectState.COMPLETED)
             await db.commit()
+            await record_project_event(
+                project_id,
+                project.user_id,
+                "extraction.completed",
+                message=(
+                    f"Extraction completed — {total_records} record(s) "
+                    f"from {processed_pages} page(s)."
+                ),
+                metadata={
+                    "records": total_records,
+                    "pages": processed_pages,
+                    "pages_extracted": pages_extracted,
+                },
+            )
 
             logger.info(
                 "project_extraction.completed",
