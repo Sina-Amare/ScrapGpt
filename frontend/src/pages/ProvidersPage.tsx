@@ -442,6 +442,13 @@ function ProviderForm({
 // Page
 // ---------------------------------------------------------------------------
 
+// Module-scoped so they survive the page unmounting: whether the Providers page
+// is currently on screen, and the id of the last test result already surfaced
+// in-page. Together these show a finished test the right way — in-page panel when
+// you're here, toast when you're away — without re-popping it on later visits.
+let providersPageMounted = false;
+let lastShownTestMutationId = 0;
+
 export function ProvidersPage() {
   const queryClient = useQueryClient();
   const [dialog, setDialog] = useState<"create" | "edit" | null>(null);
@@ -454,6 +461,28 @@ export function ProvidersPage() {
     filters: { mutationKey: ["provider-test"], status: "pending" },
     select: (mutation) => mutation.state.variables as number
   });
+  // Most recent successful test result, from the cache — lets the in-page panel
+  // appear even when the test finished after we navigated away and back (a fresh
+  // useMutation observer would otherwise miss its onSuccess).
+  const successfulTests = useMutationState({
+    filters: { mutationKey: ["provider-test"], status: "success" },
+    select: (mutation) => ({
+      mutationId: mutation.mutationId,
+      providerId: mutation.state.variables as number,
+      result: mutation.state.data as ProviderTestResponse | undefined
+    })
+  });
+  const latestTest = successfulTests.reduce<{
+    mutationId: number;
+    providerId: number;
+    result: ProviderTestResponse;
+  } | null>(
+    (best, cur) =>
+      cur.result && (!best || cur.mutationId > best.mutationId)
+        ? { mutationId: cur.mutationId, providerId: cur.providerId, result: cur.result }
+        : best,
+    null
+  );
   const [lastTest, setLastTest] = useState<{
     name: string;
     result: ProviderTestResponse;
@@ -532,7 +561,12 @@ export function ProvidersPage() {
     // meta.notify runs from the global MutationCache, so completion is reported
     // even if the user navigated away from this page while the test ran.
     meta: {
+      // Completion runs from the global MutationCache. When the page is open the
+      // in-page panel (driven from the cache) shows the result, so only toast
+      // when the user has navigated away.
       notify: (data: unknown) => {
+        void invalidate();
+        if (providersPageMounted) return;
         const result = data as ProviderTestResponse;
         const name =
           providers.data?.find((p) => p.id === result.provider_config_id)?.name ?? "Provider";
@@ -541,20 +575,35 @@ export function ProvidersPage() {
         } else {
           toast.error(`${name} — test failed: ${result.error ?? "open Providers for details"}`);
         }
-        void invalidate();
       },
       notifyError: (err: unknown) => {
-        toast.error(err instanceof Error ? err.message : "Provider test failed");
         void invalidate();
+        toast.error(err instanceof Error ? err.message : "Provider test failed");
       }
-    },
-    onSuccess: (result, id) => {
-      // In-page detail panel — only relevant while still on this page.
-      const name = providers.data?.find((p) => p.id === id)?.name ?? `Provider #${id}`;
-      setLastTest({ name, result });
-    },
-    onError: (err) => setError(providerError(err)),
+    }
   });
+
+  // Track mount so meta.notify can decide panel-vs-toast.
+  useEffect(() => {
+    providersPageMounted = true;
+    return () => {
+      providersPageMounted = false;
+    };
+  }, []);
+
+  // Surface a freshly-finished test in the in-page panel — including one that
+  // completed while we were away and have now returned to. The module-scoped
+  // marker stops it re-popping on later visits.
+  useEffect(() => {
+    if (latestTest && latestTest.mutationId > lastShownTestMutationId) {
+      lastShownTestMutationId = latestTest.mutationId;
+      const name =
+        providers.data?.find((p) => p.id === latestTest.providerId)?.name ??
+        `Provider #${latestTest.providerId}`;
+      setLastTest({ name, result: latestTest.result });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestTest?.mutationId]);
 
   const reveal = useMutation({
     mutationFn: ({ id, password }: { id: number; password: string }) =>
