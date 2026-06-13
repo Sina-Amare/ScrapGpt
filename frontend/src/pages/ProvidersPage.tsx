@@ -5,6 +5,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  Info,
   KeyRound,
   Pencil,
   Plus,
@@ -91,15 +92,16 @@ function ApiKeyField({
 // Capability flag row
 // ---------------------------------------------------------------------------
 
-function CapFlag({ label, ok }: { label: string; ok: boolean }) {
+type CapStatus = "ok" | "fail" | "info";
+
+function CapFlag({ label, status }: { label: string; status: CapStatus }) {
+  const Icon = status === "ok" ? CheckCircle2 : status === "fail" ? XCircle : Info;
+  const iconColor =
+    status === "ok" ? "text-green-500" : status === "fail" ? "text-red-400" : "text-amber-500";
   return (
     <div className="flex items-center gap-2 text-sm">
-      {ok ? (
-        <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
-      ) : (
-        <XCircle className="h-4 w-4 shrink-0 text-red-400" />
-      )}
-      <span className={ok ? "text-ink" : "text-muted"}>{label}</span>
+      <Icon className={`h-4 w-4 shrink-0 ${iconColor}`} />
+      <span className={status === "fail" ? "text-muted" : "text-ink"}>{label}</span>
     </div>
   );
 }
@@ -129,10 +131,17 @@ function AnimatedCapabilityPanel({
     return () => timers.forEach(clearTimeout);
   }, []);
 
-  const capFlags = [
-    { label: "Connectivity", ok: !!flags.connectivity },
-    { label: "JSON output validated", ok: !!flags.validated_json },
-    { label: `Native JSON mode${flags.native_json ? "" : " (prompt-based fallback)"}`, ok: !!flags.native_json },
+  const capFlags: { label: string; status: CapStatus }[] = [
+    { label: "Connectivity", status: flags.connectivity ? "ok" : "fail" },
+    { label: "JSON output validated", status: flags.validated_json ? "ok" : "fail" },
+    flags.native_json
+      ? { label: "Native JSON mode", status: "ok" }
+      : {
+          // Not a failure: the model lacks native JSON mode, so we use a
+          // prompt-based fallback — which still produces valid JSON above.
+          label: "Prompt-based JSON (native mode not supported — fine)",
+          status: flags.validated_json ? "info" : "fail"
+        },
   ];
 
   return (
@@ -167,7 +176,7 @@ function AnimatedCapabilityPanel({
                   animate={{ opacity: 1, x: 0, height: "auto" }}
                   transition={{ duration: 0.3 }}
                 >
-                  <CapFlag label={flag.label} ok={flag.ok} />
+                  <CapFlag label={flag.label} status={flag.status} />
                 </motion.div>
               ) : (
                 <motion.div
